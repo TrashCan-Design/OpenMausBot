@@ -1,0 +1,377 @@
+================================================================================
+OPENBOT AUDIT RECONCILIATION & IMPLEMENTATION PLAN (code1.txt)
+================================================================================
+Document Purpose  : Deep analysis and verification of the pasted latency audit report
+                    against the current OpenBot codebase (codex/windows-installer and
+                    release/0.1.142), detailing confirmed real bottlenecks, synthetic/
+                    mismatched references, and an actionable production implementation plan.
+Target File       : code1.txt
+Date              : 2026-11-13
+Repository        : TrashCan-Design/OpenBot (forked from OpenMausBot)
+================================================================================
+
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+1. Executive Assessment of Pasted Audit Text
+2. Subsystem-by-Subsystem Code Verification & Discrepancy Matrix
+   2.1 Subsystem 1: Execution Surface Routing & Batch Action Serialization
+   2.2 Subsystem 2: ACP & Custom CLI Driver Overhead
+   2.3 Subsystem 3: Screenshot & Vision Pipeline Bottlenecks
+   2.4 Subsystem 4: Browser Engine & Daemon Timeouts
+   2.5 Subsystem 5: System Prompt & Tool Selection Bias
+3. File-by-File Reality Check Table (Pasted Claims vs. Real Codebase)
+4. Concrete, Production-Ready Implementation Plan (Adapted to Real Codebase)
+   4.1 Step 1: Surface Co-Mounting & Auto-Routing (server/surface.ts & server/index.ts)
+   4.2 Step 2: Unbanning Batch Actions (server/computer-tool-list.ts)
+   4.3 Step 3: Container Screenshot Downscaling & JPEG Compression (server/container-computer.ts)
+   4.4 Step 4: Enabling images: true in customAcp & Probing Cache (server/drivers/acp/)
+   4.5 Step 5: System Prompt Fast-Path Optimization (server/system-prompt.ts)
+   4.6 Step 6: Verification & Test Suite Gate
+================================================================================
+
+
+1. EXECUTIVE ASSESSMENT OF PASTED AUDIT TEXT
+--------------------------------------------------------------------------------
+The pasted audit text correctly captures the macro-architectural causes of why basic
+tasks take ~8 minutes (~482 seconds) instead of <15 seconds:
+- Surface isolation locks out fast CDP/DOM tools for computer-targeted bots.
+- Atomic tool execution forces 18 to 22 sequential turns for compound actions.
+- Uncompressed raw 1080p PNG screenshots bloat conversation history to >25MB.
+- Custom ACP engines drop screenshots silently (images=0) due to missing flags.
+- System prompts bias models toward slow pixel-coordinate mouse hunting.
+
+HOWEVER, a rigorous file-by-file audit against the current OpenBot repository reveals
+that the pasted text contains a significant mix of:
+A. REAL, VERIFIED VULNERABILITIES (e.g. custom.ts missing images: true, opencode-go.ts
+   discovery timeouts, surface.ts browser lockout, BATCH_RUNNERS filter).
+B. SYNTHETIC / HALLUCINATED FILE PATHS (e.g. server/browser/cua-driver.ts,
+   server/browser/frame-capture.ts, server/browser/playwright-controller.ts,
+   server/browser/browser-manager.ts — NONE of these exist in OpenBot).
+C. SYNTHETIC FUNCTION SIGNATURES & DEPENDENCIES (e.g. filterMcpToolsForSurface,
+   captureDisplayFrame, runRawActionWithoutCapture, and sharp — Sharp is not even
+   installed in OpenBot's package.json).
+
+If one attempted to apply the diffs in the pasted text verbatim, git patch would
+fail completely due to nonexistent files, incorrect line numbers, and invalid types.
+Below is the exact reconciliation of what is real, what is synthetic, and how to
+correctly implement the performance fixes in OpenBot's actual architecture.
+
+
+2. SUBSYSTEM-BY-SUBSYSTEM CODE VERIFICATION & DISCREPANCY MATRIX
+--------------------------------------------------------------------------------
+
+2.1 Subsystem 1: Execution Surface Routing & Batch Action Serialization
+----------------------------------------------------------------------
+[CLAIM IN PASTED TEXT]:
+- Cites `server/surface.ts:62–87` claiming line 79 evaluates:
+  `const target: Surface = pinned ?? (destination === "local" ? "computer" : "browser");`
+  and line 86 returns `{ computer: "on", browser: false, pinned }`.
+- Claims `filterMcpToolsForSurface()` strips `browser_*` tools if `plan.browser` is false.
+- Cites `server/browser/cua-driver.ts` for atomic action execution.
+
+[REALITY IN CURRENT REPOSITORY]:
+1. File exists: `server/surface.ts`.
+2. Actual implementation of `placeOf` is at lines 61–84:
+   ```typescript
+   function placeOf(input: { destination: Destination; pinnedSurface?: Surface | null; browserOn: boolean; botOpened?: boolean }): SurfacePlan {
+     const { destination, browserOn } = input;
+     if (destination === "off") {
+       return { computer: "off", browser: false, pinned: null, note: OFF_NOTE };
+     }
+     const beside = input.botOpened === true && browserOn;
+     const pin = input.pinnedSurface ?? null;
+     if (pin === "browser") {
+       if (browserOn) return { computer: "off", browser: true, pinned: "browser", note: "" };
+       return { computer: "off", browser: false, pinned: pin, note: "..." };
+     }
+     if (pin) return { computer: pin, browser: beside, pinned: pin, note: "" };
+     if (destination === "browser") {
+       return browserOn
+         ? { computer: "off", browser: true, pinned: null, note: "" }
+         : { computer: "off", browser: false, pinned: null, note: NO_BROWSER_NOTE };
+     }
+     if (destination !== undefined) {
+       return { computer: destination, browser: beside, pinned: null, note: "" };
+     }
+     return { computer: undefined, browser: browserOn, pinned: null, note: "" };
+   }
+   ```
+3. The type of `computer` is `ComputerWant` (`"cloud" | "vm" | "local" | "off" | undefined`),
+   NOT `"on"`.
+4. `filterMcpToolsForSurface()` DOES NOT EXIST.
+5. Where does tool exclusion actually happen?
+   In `server/index.ts` lines 8414–8424:
+   ```typescript
+   if (
+     liveBot &&
+     plan.browser &&
+     !(plan.computer === undefined && mountedComputer && mountedComputer !== "local" && !plan.botOpened) &&
+     builtInBrowserEnabled(cfg) &&
+     liveBot.browser !== false &&
+     instance.adapter.capabilities.browserMcp === true
+   ) {
+     const selectedProfile = liveBot.browserProfile;
+     browser = await browserIntegration(bot.id, selectedProfile, { threadId, generation: dispatchClaimId });
+     if (browser) integrations.browser = browser.integration;
+   }
+   ```
+   When `destination !== undefined` (e.g. bot works on `"local"` or `"vm"`), `beside`
+   is false for user turns (`botOpened` is false/undefined), so `plan.browser` is `false`.
+   `integrations.browser` is NEVER mounted!
+6. Banned batch actions are NOT in `server/browser/cua-driver.ts` (which does not exist).
+   They are in `server/computer-tool-list.ts` lines 15–27:
+   ```typescript
+   const BATCH_RUNNERS: ReadonlySet<string> = new Set(["run_steps", "run_script"]);
+   export function listsComputerTool(name: string, besideBuiltInBrowser: boolean): boolean {
+     return !DRIVER_UPKEEP.has(name) && !BATCH_RUNNERS.has(name) && !(besideBuiltInBrowser && drivesItsOwnBrowser(name));
+   }
+   ```
+   This explicitly strips `run_steps` and `run_script` from the tools listed to the model!
+
+
+2.2 Subsystem 2: ACP & Custom CLI Driver Overhead
+-------------------------------------------------
+[CLAIM IN PASTED TEXT]:
+- `server/drivers/acp/custom.ts:14–29` omits `images: true`.
+- `server/drivers/acp/core.ts:312` checks `if (support.images && turn.images?.length)`.
+- `server/drivers/acp/opencode-go.ts:28–30` sets `DISCOVERY_TIMEOUT_MS = 20_000` and
+  `EFFORT_SURVEY_MS = 8_000`.
+
+[REALITY IN CURRENT REPOSITORY]:
+1. `server/drivers/acp/custom.ts:14–30` missing `images: true` is 100% CONFIRMED:
+   ```typescript
+   const support: AcpSupport = {
+     driverKind: "customAcp",
+     displayName: "Custom (ACP)",
+     access: "custom",
+     models: { default: "agent-default", options: [{ id: "agent-default", label: "Agent default", custom: true }] },
+     defaultCli: "",
+     nativeSource: "custom.acp",
+     loginNote: CONFIGURE_HINT,
+     spawnArgs: () => [],
+     resolveModels: resolveCustomAcpModels,
+     resolveModelsOnCreate: false,
+     selectModel: { configId: "model", agentDefault: "agent-default", allowLegacy: true },
+     modelVariants: true,
+     pickAuthMethod: () => null,
+     authFailure: "continue",
+     isAuthenticated: () => true,
+   };
+   ```
+   Because `images: true` is omitted, custom ACP drivers (including Mistral `vibe-acp`)
+   evaluate `support.images === true` to `false`.
+2. In `server/drivers/acp/core.ts`, the check is at lines 1449–1451 (not line 312):
+   ```typescript
+   const imageBlocks = support.images === true && runtimeAcceptsImages
+     ? await readAcpImageBlocks(turn.images ?? [])
+     : [];
+   ```
+   This causes `imageBlocks` to be `[]` (empty), stripping all screenshots and forcing
+   the agent into a blind click-and-fail retry loop.
+3. `server/drivers/acp/opencode-go.ts:28–30` is 100% CONFIRMED:
+   ```typescript
+   const DISCOVERY_TIMEOUT_MS = 20_000;
+   const EFFORT_SURVEY_MS = 8_000;
+   const DISCOVERY_PROBE_TTL_MS = 30_000;
+   ```
+   These timeouts burn up to 28 seconds on cold-start probes.
+
+
+2.3 Subsystem 3: Screenshot & Vision Pipeline Bottlenecks
+---------------------------------------------------------
+[CLAIM IN PASTED TEXT]:
+- Cites `server/browser/frame-capture.ts` and `cua-driver.ts`.
+- Uses `sharp(rawBuffer).resize(...).webp(...)` to compress screenshots.
+- Claims hardcoded settle sleep of 300ms–500ms in `cua-driver.ts`.
+
+[REALITY IN CURRENT REPOSITORY]:
+1. `server/browser/frame-capture.ts` DOES NOT EXIST.
+2. `server/browser/cua-driver.ts` DOES NOT EXIST.
+3. `sharp` is NOT an installed dependency in `package.json`. Introducing `sharp` would
+   require adding native C++ binaries that break cross-platform offline packaging.
+4. WHERE SCREENSHOTS ACTUALLY OCCUR:
+   - For Local VM (`container-computer`):
+     `server/container-computer.ts` lines 1034–1058 (`containerComputerFrame`):
+     ```typescript
+     const screenshot = "/tmp/openmausbot-preview.png";
+     await runner(
+       status.runtime,
+       cuaExecArgs(["call", "get_desktop_state", "{}", "--socket", CUA_SOCKET, "--screenshot-out-file", screenshot], { container: target.containerName }),
+       30_000,
+     );
+     const { stdout } = await runner(
+       status.runtime,
+       ["exec", target.containerName, "base64", "-w0", screenshot],
+       30_000,
+     );
+     const data = stdout.trim();
+     return { png: data, format: checked.mime === "image/jpeg" ? "jpeg" : "png" };
+     ```
+     This dumps a raw, unscaled 1080p/Retina PNG file directly to base64!
+   - Compare this with `server/vps-computer.ts` lines 56–62, where OpenBot ALREADY
+     uses a built-in Python/Pillow script inside the Linux container:
+     ```python
+     SCREENSHOT_TRANSFER = `/opt/venv/bin/python -I -c 'import base64, io, sys
+     from PIL import Image
+     with Image.open(sys.argv[1]) as image:
+         image.thumbnail((1280, 1280))
+         output = io.BytesIO()
+         image.convert("RGB").save(output, format="JPEG", quality=70)
+     sys.stdout.write(base64.b64encode(output.getvalue()).decode("ascii"))' "$1" 2>/dev/null || { base64 < "$1" | tr -d "\\n"; }`;
+     ```
+     This Python/Pillow downscaling pattern is native to the Cua container environment
+     and requires NO new npm dependencies or sharp installation!
+
+
+2.4 Subsystem 4: Browser Engine & Daemon Timeouts
+-------------------------------------------------
+[CLAIM IN PASTED TEXT]:
+- Cites `server/browser/agent-browser.ts` with 30s–31s SIGKILL timeouts.
+- Cites `server/browser/playwright-controller.ts` and `browser-manager.ts`.
+
+[REALITY IN CURRENT REPOSITORY]:
+1. `server/browser/agent-browser.ts` DOES NOT EXIST.
+2. `server/browser/playwright-controller.ts` DOES NOT EXIST.
+3. `server/browser/browser-manager.ts` DOES NOT EXIST.
+4. WHERE BROWSER TIMEOUTS ACTUALLY OCCUR:
+   - `server/browser-runtime.ts` lines 55–65:
+     `export const BROWSER_CALL_DEFAULTS = { requestTimeoutMs: 120_000, laneWaitMs: 30_000, ... }`
+     Line 437: "agent-browser runs one command at a time, and a frame behind a stuck action stays queued past its own timeout..."
+     `laneWaitMs` of 30,000ms causes serial command blocking.
+   - `server/browser-engine.ts` lines 83–108 (`runBrowserCommand`):
+     ```typescript
+     const timer = setTimeout(() => {
+       child.kill("SIGTERM");
+       killTimer = setTimeout(() => { if (!exited) child.kill("SIGKILL"); }, 5_000);
+       killTimer.unref?.();
+       finish(false);
+     }, Math.max(1, deadline - Date.now()));
+     ```
+
+
+2.5 Subsystem 5: System Prompt & Tool Selection Bias
+----------------------------------------------------
+[CLAIM IN PASTED TEXT]:
+- Cites `server/local-computer-guidance.ts:3–18` claiming it contains `LOCAL_COMPUTER_SYSTEM_PROMPT`
+  and function `getLocalComputerGuidance(plan: SurfacePlan)`.
+
+[REALITY IN CURRENT REPOSITORY]:
+1. `LOCAL_COMPUTER_SYSTEM_PROMPT` DOES NOT EXIST in `server/local-computer-guidance.ts`.
+2. `getLocalComputerGuidance` DOES NOT EXIST in `server/local-computer-guidance.ts`.
+3. `server/local-computer-guidance.ts` actually contains:
+   `PLAIN_WORDS`, `OWN_PROFILE_UNAVAILABLE`, `localComputerResultLine`, `localComputerRelay`.
+4. WHERE THE ACTUAL COMPUTER GUIDANCE PROMPTS LIVE:
+   - `server/system-prompt.ts` lines 110–112:
+     ```typescript
+     export const SANDBOX_DESKTOP_INPUT =
+       " On this desktop, read a window with get_window_state before acting on it and take x,y from that window's own screenshot. Pass delivery_mode \"foreground\" for keys, typing, scrolling and pixel clicks: background input is not available here, and foreground moves focus only inside this desktop, never on the user's own screen. If an accessibility type or click changed nothing, read that window again and type in the foreground; a browser search may use Firefox's address bar. Never repeat a key, type, click, or navigation whose result timed out or was not confirmed. A task that names Firefox uses the Firefox already open on this desktop.";
+     ```
+   - `server/system-prompt.ts` lines 114–125:
+     `COMPUTER_PARAGRAPH["vm-private"]` and `["vm-shared"]`:
+     "Run every command with vm_exec... Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and work carefully."
+   - `server/surface.ts` line 156 (`SURFACE_AUTHORITY`):
+     "Do not substitute the provider's own desktop, a shell-launched browser, or another automation path for the selected OpenBot surface."
+   These are the actual prompt strings that condition models to execute slow pixel hunting.
+
+
+3. FILE-BY-FILE REALITY CHECK TABLE
+--------------------------------------------------------------------------------
+Pasted File Reference              Exists?  Real Location / Equivalent in OpenBot
+--------------------------------------------------------------------------------
+server/surface.ts                  YES      server/surface.ts (lines 51–84, 155–204)
+server/local-computer-guidance.ts  YES      server/local-computer-guidance.ts (diff content)
+                                            Real prompt is in server/system-prompt.ts:110
+server/drivers/acp/core.ts         YES      server/drivers/acp/core.ts (lines 280, 1449)
+server/drivers/acp/custom.ts       YES      server/drivers/acp/custom.ts (lines 14–30)
+server/drivers/acp/gemini.ts       YES      server/drivers/acp/gemini.ts
+server/drivers/acp/opencode-go.ts  YES      server/drivers/acp/opencode-go.ts (lines 28–30)
+server/drivers/openai-compat.ts    YES      server/drivers/openai-compat.ts
+server/drivers/agents-app-tools.ts YES      server/drivers/agents-app-tools.ts
+server/browser/cua-driver.ts       NO       electron/cua.mjs & server/computer-tool-list.ts
+server/browser/frame-capture.ts    NO       server/container-computer.ts:1034-1060
+server/browser/agent-browser.ts    NO       server/browser-engine.ts & browser-runtime.ts
+server/browser/playwright-contr... NO       Does not exist in OpenBot
+server/browser/browser-manager.ts  NO       server/browser/engines.ts & service.ts
+src/computer-ask-preview.tsx       YES      src/computer-ask-preview.tsx
+--------------------------------------------------------------------------------
+
+
+4. CONCRETE, PRODUCTION-READY IMPLEMENTATION PLAN
+--------------------------------------------------------------------------------
+To achieve the <15s target without breaking tests, violating strict sandbox invariants,
+or introducing foreign dependencies (like sharp), here is the step-by-step plan:
+
+4.1 Step 1: Surface Co-Mounting & Auto-Routing
+----------------------------------------------
+- Target: `server/surface.ts` and `server/index.ts`
+- Problem: `placeOf()` sets `browser: false` whenever `destination` is set (e.g. "local" or "vm")
+  and `botOpened` is false/undefined.
+- Fix:
+  In `server/surface.ts`:
+  Set `const beside = browserOn;` instead of requiring `input.botOpened === true`.
+  This allows both `browser` (CDP/DOM AX tree tools) and `computer` (OS desktop tools)
+  to mount side-by-side whenever the browser is enabled in app settings.
+- Expected Gain: Reduces turn count for web tasks from 20 turns to 1–2 turns (~280s saved).
+
+4.2 Step 2: Unbanning Batch Actions
+-----------------------------------
+- Target: `server/computer-tool-list.ts`
+- Problem: `BATCH_RUNNERS = new Set(["run_steps", "run_script"])` excludes batch tools
+  from the tool catalog.
+- Fix:
+  Empty `BATCH_RUNNERS = new Set();` so that `run_steps` is advertised to models that
+  support batch operations, allowing multi-step actions (focus + type + submit) to
+  execute in a single LLM round-trip.
+- Expected Gain: Cuts turn count on desktop tasks by 50% (~60s saved).
+
+4.3 Step 3: Container Screenshot Downscaling & JPEG Compression
+---------------------------------------------------------------
+- Target: `server/container-computer.ts`
+- Problem: Extracts full 1080p/Retina raw PNGs via `base64 -w0`, sending 2MB–5.5MB
+  base64 per turn.
+- Fix:
+  Adopt the proven Python/Pillow downscaling pipeline from `server/vps-computer.ts:56–62`.
+  Execute a one-line Python script inside the container to downscale the captured
+  `/tmp/openmausbot-preview.png` to max 1280x720 and compress as JPEG quality 75 before
+  base64 encoding.
+- Expected Gain: Reduces frame payload from ~4MB to ~80KB (a 95%+ reduction), cutting
+  HTTP upload time and reducing Gemini Flash TTFT from 9.5s to 0.8s (~90s saved).
+
+4.4 Step 4: Enabling images: true in customAcp & Probing Cache
+--------------------------------------------------------------
+- Target: `server/drivers/acp/custom.ts` and `server/drivers/acp/opencode-go.ts`
+- Problem: `custom.ts` AcpSupport omits `images: true`, dropping all screenshots (images=0)
+  for Mistral (`vibe-acp`) and custom engines. `opencode-go.ts` discovery timeouts
+  delay initial execution by up to 28s.
+- Fix:
+  1. Add `images: true` to `support` in `server/drivers/acp/custom.ts`.
+  2. Reduce `DISCOVERY_TIMEOUT_MS` to 4,000ms and `EFFORT_SURVEY_MS` to 2,000ms, and
+     increase `DISCOVERY_PROBE_TTL_MS` to 300,000ms in `opencode-go.ts`.
+- Expected Gain: Completely eliminates 3–5 minute blind retry loops on Mistral/custom engines
+  and cuts 20s of discovery probe latency.
+
+4.5 Step 5: System Prompt Fast-Path Optimization
+------------------------------------------------
+- Target: `server/system-prompt.ts` (`SANDBOX_DESKTOP_INPUT`) and `server/surface.ts` (`SURFACE_AUTHORITY`)
+- Problem: Instructs models to perform slow pixel coordinate hunting and forbids direct CLI
+  or keyboard shortcuts.
+- Fix:
+  Update `SANDBOX_DESKTOP_INPUT` in `server/system-prompt.ts` to instruct models:
+  "On this desktop, prioritize direct action: use hotkey ['Control', 'l'] to focus the
+  address bar, type the URL, and press Return in one turn, or execute `firefox \"<url>\" &`
+  via vm_exec directly. Avoid sequential pixel mouse movements when hotkeys or URLs
+  achieve the goal directly."
+- Expected Gain: Replaces 10+ mouse-hunting turns with 1 single compound turn (~50s saved).
+
+4.6 Step 6: Verification & Test Suite Gate
+------------------------------------------
+Run full validation suite to verify zero regressions:
+1. `pnpm lint` (`oxlint --deny-warnings .`)
+2. `pnpm i18n:check` (`node scripts/generate-locale.mjs --check` across 16 languages)
+3. `pnpm typecheck` (`tsc -b && tsc -p tsconfig.server.json`)
+4. Electron unit tests (`pnpm test:electron`)
+5. Surface routing test suite (`vitest run server/surface.test.ts`)
+6. Container computer test suite (`vitest run server/container-computer.test.ts`)
+================================================================================
+END OF CODE1.TXT
+================================================================================

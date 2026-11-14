@@ -13,6 +13,7 @@ export function findOpenBot(bots) {
     ?? bots.find(bot => bot.chiefOfStaff && !bot.hidden)
     ?? null;
 }
+export const findMausBot = findOpenBot;
 
 export async function readFrames(body, onFrame, signal) {
   const reader = body.getReader();

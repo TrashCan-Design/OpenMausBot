@@ -1,7 +1,7 @@
 # Per-bot tool selection
 
 All checks below use disposable homes, workspaces and MCP servers. They do
-not read the user's OpenMausBot data or connect a real mail account.
+not read the user's OpenBot data or connect a real mail account.
 
 ## Repeatable automated checks
 
@@ -175,7 +175,7 @@ all 13 spawned proxy paths. Optional browser fixtures absent from the managed
 checkout are not counted as tested. The actual tool-selection renderer workflow
 and the screenshots above were verified separately in the primary checkout.
 
-[Final composed fork CI](https://github.com/BitL8-ByteShort/OpenMausBot/actions/runs/36804814592)
+[Final composed fork CI](https://github.com/BitL8-ByteShort/OpenBot/actions/runs/36804814592)
 on `738c5a8a586b6922b28a32947a06c05ba12abe62` passed all 26 selected checks,
 including all 12 Vitest shards across macOS, Ubuntu and Windows, builds,
 renderer, Electron and source-free packaging checks. Deployment was deliberately

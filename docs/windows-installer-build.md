@@ -2,7 +2,7 @@
 
 The branch used by the previous successful fork installer build is
 `codex/windows-installer` (run 41248641661). Its old `fork-windows.yml` checked
-`repo: OpenMausBot`, predating the repository rename. The maintained
+`repo: OpenBot`, predating the repository rename. The maintained
 `.github/workflows/package-win.yml` already checks `TrashCan-Design/OpenBot`
 and the browser, CUA, private updater metadata and packaged server resources.
 A push to that installer branch now triggers that existing workflow.

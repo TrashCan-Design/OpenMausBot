@@ -44,7 +44,7 @@ Expected:
   draft to a stranger, draft twice and read. Only one reply draft to the
   thread's sender and the read reach the service. No card is shown, and the
   refusals are in the decision log. The run mounts only `agents`, `composio`
-  and OpenMausBot's answerer, and Gmail's answer reaches it as records. A later
+  and OpenBot's answerer, and Gmail's answer reaches it as records. A later
   ordinary turn's conversation search does not find the run.
 
 ## MausBot as the owner

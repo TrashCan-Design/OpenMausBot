@@ -126,7 +126,8 @@ export function threadRefUrl(ref: { botId: string; threadId: string }): string {
 
 export function parseThreadRefUrl(value: string): ThreadRefAddress | null {
   const raw = value.trim();
-  if (!raw.toLowerCase().startsWith(THREAD_URL_PREFIX)) return null;
+  const lower = raw.toLowerCase();
+  if (!lower.startsWith(THREAD_URL_PREFIX) && !lower.startsWith("openbot://thread/")) return null;
   let url: URL;
   try {
     url = new URL(raw);
@@ -154,7 +155,8 @@ export function parseThreadRefUrl(value: string): ThreadRefAddress | null {
 
 export function parseBotRefUrl(value: string): { botId: string } | null {
   const raw = value.trim();
-  if (!raw.toLowerCase().startsWith(BOT_URL_PREFIX)) return null;
+  const lower = raw.toLowerCase();
+  if (!lower.startsWith(BOT_URL_PREFIX) && !lower.startsWith("openbot://bot/")) return null;
   let url: URL;
   try {
     url = new URL(raw);
@@ -177,7 +179,8 @@ export function parseBotRefUrl(value: string): { botId: string } | null {
 
 /** Even a link that fails strict parsing must never reach the shell as an external link. */
 export function looksLikeThreadRefUrl(value: string): boolean {
-  return value.trim().toLowerCase().startsWith(THREAD_URL_PREFIX);
+  const lower = value.trim().toLowerCase();
+  return lower.startsWith(THREAD_URL_PREFIX) || lower.startsWith("openbot://thread/");
 }
 
 export function isThreadUuid(value: string): boolean {
@@ -344,7 +347,7 @@ export function threadTokenFromPaste(
 ): { token: string; ref: ResolvedThreadRef } | null {
   const trimmed = pasted.trim();
   if (!trimmed) return null;
-  const wrapped = /^\[((?:\\.|[^\\\]])*)\]\((openmausbot:\/\/thread\/[^()\s]*)\)$/.exec(trimmed);
+  const wrapped = /^\[((?:\\.|[^\\\]])*)\]\(((?:openbot|openmausbot):\/\/thread\/[^()\s]*)\)$/.exec(trimmed);
   const address = wrapped
     ? parseThreadRefUrl(wrapped[2])
     : parseThreadRefUrl(trimmed) ?? (isThreadUuid(trimmed) ? { threadId: trimmed } : null);

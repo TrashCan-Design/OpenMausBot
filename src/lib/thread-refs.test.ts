@@ -125,7 +125,9 @@ describe("canonical thread links", () => {
     const link = threadRefUrl({ botId: "scout", threadId: uuid });
     expect(link).toBe(`openmausbot://thread/${uuid}?bot=scout`);
     expect(parseThreadRefUrl(link)).toEqual({ threadId: uuid, botId: "scout" });
+    expect(parseThreadRefUrl(`openbot://thread/${uuid}?bot=scout`)).toEqual({ threadId: uuid, botId: "scout" });
     expect(parseThreadRefUrl(`openmausbot://thread/${uuid}`)).toEqual({ threadId: uuid });
+    expect(parseThreadRefUrl(`openbot://thread/${uuid}`)).toEqual({ threadId: uuid });
     for (const miss of [
       `openmausbot://thread/${uuid}/extra?bot=scout`,
       `openmausbot://thread/${uuid}?bot=scout&x=1`,
@@ -141,6 +143,7 @@ describe("canonical thread links", () => {
     const link = threadRefUrl({ botId: "scout", threadId: uuid });
     expect(threadTokenFromPaste(link, uuidThreads)).toEqual({ token: "#QA PR 245", ref: expect.objectContaining({ threadId: uuid, botId: "scout" }) });
     expect(threadTokenFromPaste(`[QA PR 245](${link})`, uuidThreads)?.token).toBe("#QA PR 245");
+    expect(threadTokenFromPaste(`[QA PR 245](openbot://thread/${uuid}?bot=scout)`, uuidThreads)?.token).toBe("#QA PR 245");
     expect(threadTokenFromPaste(uuid, uuidThreads)?.ref).toMatchObject({ threadId: uuid });
     expect(threadTokenFromPaste("openmausbot://thread/" + crypto.randomUUID(), uuidThreads)).toBeNull();
     expect(threadTokenFromPaste("not a uuid", uuidThreads)).toBeNull();
