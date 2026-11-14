@@ -66,6 +66,8 @@ const suite = new CipherSuite({
   aead: new Aes256Gcm(),
 });
 const INFO = new TextEncoder().encode(PHONE_SECRET_INFO);
+// Version 1 CryptoKit clients use the original HPKE domain; authenticated metadata stays identical.
+const LEGACY_INFO = new TextEncoder().encode("OpenMausBot phone credential v1");
 
 const decodeBase64URL = (value: unknown, expectedBytes?: number): Uint8Array | null => {
   if (typeof value !== "string" || !BASE64URL.test(value)) return null;
@@ -412,7 +414,15 @@ export class PhoneSecretBridge {
         phoneSecretAAD(context),
       );
     } catch {
-      throw new PhoneSecretError("The encrypted credential could not be verified");
+      try {
+        opened = await suite.open(
+          { recipientKey: identity.privateKey, enc: encapsulatedKey, info: LEGACY_INFO },
+          ciphertext,
+          phoneSecretAAD(context),
+        );
+      } catch {
+        throw new PhoneSecretError("The encrypted credential could not be verified");
+      }
     }
 
     const openedBytes = new Uint8Array(opened);

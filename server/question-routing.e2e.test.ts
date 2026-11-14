@@ -156,7 +156,7 @@ describe("Just do it: nothing a bot can settle reaches the person", () => {
       { key: "JD3-L", match: ["JD3-JOB"], steps: [
         { arguments: { bot_ids: [dachs.id], message: "JD3-BRIEF-B: Lade die Notion-Seite herunter." } },
         { arguments: { bot_ids: [otter.id], message: "JD3-BRIEF-O: Fasse die Notizen zusammen." } }], reply: "JD3-L: verteilt." },
-      { key: "JD3-L-MID", match: ["[OpenMausBot note from @Dachs", "JD3-JOB"], reply: "JD3-L-MID: Otter ist fertig; Dachs wartet auf deine Notion-Anmeldung." },
+      { key: "JD3-L-MID", match: ["[OpenBot note from @Dachs", "JD3-JOB"], reply: "JD3-L-MID: Otter ist fertig; Dachs wartet auf deine Notion-Anmeldung." },
       done("JD3"));
     script(dachs.id,
       { key: "JD3-B2", match: ["JD3-BRIEF-B", "instead of pressing Done"], reply: "JD3-B2: Seite geladen." },
@@ -261,7 +261,7 @@ describe("Ask me first: a question waits for the person, and an answer counts wh
     const question = "Nur den Abschlusstext oder auch den Einladungstext?";
     script(fuchs.id, handOn("AF3", dachs, "AF3-BRIEF: Setz den Fix um."), done("AF3"));
     script(dachs.id,
-      { key: "AF3-B2", match: ["AF3-BRIEF", "OpenMausBot restarted"], reply: "AF3-B2: Beides angepasst, wie im Auftrag." },
+      { key: "AF3-B2", match: ["AF3-BRIEF", "OpenBot restarted"], reply: "AF3-B2: Beides angepasst, wie im Auftrag." },
       { key: "AF3-B", match: ["AF3-BRIEF"], timeoutMs: 120_000, steps: [{ server: "ogb", tool: "ask_user", arguments: { question, choices: ["Nur den Abschlusstext", "Beides"] } }], reply: "AF3-B: nie erreicht." });
     await say(fuchs, inbox, "AF3-JOB: Lass Dachs den Fix umsetzen.");
     const work = await (async () => { await until(async () => Boolean(await workThread())); return (await workThread())!; })();

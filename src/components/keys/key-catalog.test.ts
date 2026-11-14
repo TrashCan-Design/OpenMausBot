@@ -20,6 +20,7 @@ const NOT_A_PERSONS_KEY: Record<string, string> = {
   OMB_BROWSER_CONNECTION: "the app's own browser, not a credential",
   OMB_USER_DATA: "the app's own data folder, not a credential",
   OMB_BOAT_API: "the Boat address, not a credential",
+  BOX_TOKEN: "the retired Boat provider; OpenBot does not offer this key",
 };
 
 const electron = (file: string) => readFileSync(new URL(`../../../electron/${file}`, import.meta.url), "utf8");
@@ -42,25 +43,36 @@ describe("every credential has one home on the keys page", () => {
     const patched = [...electron("credential-patch.mjs").matchAll(/^ {2}(\w+): \(value\) =>/gm)].map(([, name]) => name!);
     expect(stored.length).toBeGreaterThan(10);
     for (const { name, env } of stored) {
+      if (name === "boxToken") {
+        expect(KEY_CATALOG.some((entry) => entry.env.includes(env)), name).toBe(false);
+        continue;
+      }
       const home = KEY_CATALOG.find((entry) => entry.env.includes(env));
       expect(home, name).toBeDefined();
       if (home?.target) expect(home.target.slot, name).toBe(name);
     }
     const homed = (name: string) => KEY_CATALOG.some((entry) => entry.target?.slot === name)
       || stored.some((row) => row.name === name && KEY_CATALOG.some((entry) => entry.env.includes(row.env)));
-    for (const name of patched) expect(homed(name), name).toBe(true);
+    for (const name of patched) {
+      if (name === "boxToken") {
+        expect(homed(name), name).toBe(false);
+        continue;
+      }
+      expect(homed(name), name).toBe(true);
+    }
   });
 
   // A key saved from a bot's card lands exactly where its Settings row puts it: the same desktop slot, or the same config.
   it("covers every credential a bot can ask for in a chat, saved where Settings saves it", () => {
-    const homes: Record<keyof typeof CREDENTIAL_TARGETS, KeyId> = {
-      xaiApiKey: "xai", boxToken: "box", opencodeGoApiKey: "opencodeGo", ttsKey: "elevenlabs", fishAudioKey: "fishAudio",
+    const homes: Record<Exclude<keyof typeof CREDENTIAL_TARGETS, "boxToken">, KeyId> = {
+      xaiApiKey: "xai", opencodeGoApiKey: "opencodeGo", ttsKey: "elevenlabs", fishAudioKey: "fishAudio",
       openaiImageApiKey: "imageOpenai", onePasswordToken: "onePassword", composioApiKey: "composio", openaiApiKey: "openai",
       anthropicApiKey: "anthropic", openrouterApiKey: "openrouter", mistralApiKey: "mistral", cerebrasApiKey: "cerebras", groqApiKey: "groq",
       greenferenceApiKey: "greenference", metaApiKey: "meta", deepseekApiKey: "deepseek",
     };
-    expect(Object.keys(homes).sort()).toEqual(Object.keys(CREDENTIAL_TARGETS).sort());
-    for (const [name, id] of Object.entries(homes) as Array<[keyof typeof CREDENTIAL_TARGETS, KeyId]>) {
+    expect(Object.keys(homes).sort()).toEqual(Object.keys(CREDENTIAL_TARGETS).filter((name) => name !== "boxToken").sort());
+    expect(KEY_CATALOG.some((entry) => entry.id === "box")).toBe(false);
+    for (const [name, id] of Object.entries(homes) as Array<[Exclude<keyof typeof CREDENTIAL_TARGETS, "boxToken">, KeyId]>) {
       const entry = keyEntry(id);
       if (!entry.target) {
         expect(entry.opens, name).toBe("logins");
@@ -103,7 +115,7 @@ describe("searching the keys", () => {
   it("matches a provider's name, what the key is for, and its section's title", () => {
     expect(found("fish")).toEqual(["fishAudio"]);
     expect(found("ElevenLabs")).toEqual(["elevenlabs"]);
-    expect(found("Computers and browser")).toEqual(["box", "vps", "onePassword"]);
+    expect(found("Computers and browser")).toEqual(["vps", "onePassword"]);
     expect(found("voice")).toEqual(expect.arrayContaining(["liveCalls", "liveKey", "elevenlabs", "fishAudio"]));
     expect(found("openai")).toEqual(expect.arrayContaining(["openai", "liveCalls", "liveKey", "imageOpenai"]));
     expect(found("gmail")).toEqual(["composio"]);
@@ -114,9 +126,9 @@ describe("searching the keys", () => {
 describe("a key pasted into the wrong row", () => {
   it("names the provider the key belongs to", () => {
     expect(looksLikeOtherKey(keyEntry("openai"), "sk-ant-api03-abcdefghijkl")?.id).toBe("anthropic");
-    expect(looksLikeOtherKey(keyEntry("box"), "sk-proj-abcdefghijkl")?.id).toBe("openai");
+    expect(looksLikeOtherKey(keyEntry("vps"), "sk-proj-abcdefghijkl")?.id).toBe("openai");
     expect(looksLikeOtherKey(keyEntry("liveCalls"), "gsk_abcdefghijkl")?.id).toBe("groq");
-    expect(looksLikeOtherKey(keyEntry("composio"), "boat_abcdefghijkl")?.id).toBe("box");
+    expect(looksLikeOtherKey(keyEntry("composio"), "boat_abcdefghijkl")).toBeNull();
   });
 
   it("stays quiet for the row's own key and for keys with no telling shape", () => {

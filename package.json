@@ -1,7 +1,7 @@
 {
   "name": "openbot",
   "private": true,
-  "version": "0.1.136",
+  "version": "0.1.142",
   "description": "A local-first chat app for running a team of AI agents.",
   "homepage": "https://github.com/TrashCan-Design/OpenBot",
   "repository": {
@@ -31,6 +31,7 @@
     "docs:build": "pnpm --filter @openmausbot/docs build",
     "docs:preview": "pnpm --filter @openmausbot/docs preview",
     "companion": "node --experimental-strip-types companion/src/index.ts",
+    "openbot": "node --experimental-strip-types server/openbot.ts",
     "omb": "node --experimental-strip-types server/openmausbot.ts",
     "pair": "node --experimental-strip-types server/openmausbot.ts pair",
     "dev:server": "node --experimental-strip-types server/dev-server.ts",
@@ -105,7 +106,7 @@
     "@novnc/novnc": "1.7.0",
     "@resvg/resvg-js": "2.6.2",
     "@tanstack/react-virtual": "^3.14.13",
-    "@trycua/cua-driver": "0.28.2",
+    "@trycua/cua-driver": "0.41.3",
     "ag-grid-community": "36.2.0",
     "ag-grid-react": "36.2.0",
     "ajv": "8.20.0",

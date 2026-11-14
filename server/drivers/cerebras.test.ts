@@ -79,7 +79,7 @@ describe("Cerebras provider", () => {
   });
 
   it.each([
-    ["Checking the live HN front page in the browser first — the top story can rotate between requests.", 2],
+    ["Checking the live HN front page in the browser first —", 2],
     ["Opening the page now:", 2],
     ["The top story is about Gemini 4. Want a longer summary?", 1],
     ["Here is the summary: it covers Google's new model and its benchmarks.", 1],

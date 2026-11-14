@@ -602,7 +602,7 @@ describe("the guard", () => {
     expect(scan({
       "server/b.ts": [
         `const language = lineLanguage(person);`,
-        `store.appendMessage(id, { role: "bot", kind: "text", text: serverLine(language, "server.reports.sent", { report: id }) });`,
+        `store.appendMessage(id, { role: "bot", kind: "text", text: serverLine(language, "server.runs.didNotFinishWhy", { detail: id }) });`,
         `store.appendMessage(id, { role: "bot", kind: "activity", tool: { name: "data_show", ok: true } });`,
         `store.appendMessage(id, { role: "bot", kind: "text", text: reply.text });`,
         `const prompt = "Tell the person what you found, in their language.";`,
@@ -612,7 +612,7 @@ describe("the guard", () => {
   });
 
   it("finds English handed to a line from the packs", () => {
-    expect(scan({ "server/c.ts": `store.appendMessage(id, { role: "bot", kind: "text", text: serverLine(language, "server.reports.notYet", { why: "the server is down", when }) });` }))
+    expect(scan({ "server/c.ts": `store.appendMessage(id, { role: "bot", kind: "text", text: serverLine(language, "server.runs.didNotFinishWhy", { detail: "the server is down" }) });` }))
       .toEqual(["server/c.ts line: the server is down"]);
   });
 });

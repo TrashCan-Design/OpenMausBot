@@ -16,6 +16,7 @@ import {
   MANAGED_LABEL,
 } from "./container-computer.ts";
 import { VPS_CONTAINER_LABEL, VPS_IMAGE, VPS_MANAGED_LABEL, VPS_VIEWER_LABEL, vpsContainerName } from "./vps-computer.ts";
+import { sharedVpsOwnerId } from "./shared-vps.ts";
 import { CONTROL_BUSY, CONTROL_REFUSAL_PLAIN, controlRefusal, createControlClient } from "./control-client.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import type { RoutineSchedule } from "../shared/routines.ts";
@@ -129,6 +130,7 @@ case "$*" in
       exit 1
     fi
     cat "$FAKE_DOCKER_DIR/image.json" ;;
+  *" exec "*" mcp "*) exec "/usr/bin/env" node "$FAKE_DOCKER_DIR/cua-mcp.mjs" ;;
   *" exec "*"--version"*) echo "cua-driver ${CUA_DRIVER_VERSION}" ;;
   *" exec "*"--screenshot-out-file"*)
     : > "$FAKE_DOCKER_DIR/capture-started"
@@ -207,6 +209,22 @@ const forward = args[args.indexOf('-L') + 1];
 const port = Number(forward.split(':')[1]);
 createServer(socket => socket.end()).listen(port, '127.0.0.1');
 `, { mode: 0o755 });
+    writeFileSync(join(fakeBin, "cua-mcp.mjs"), `
+import { createInterface } from "node:readline";
+import { readFileSync, appendFileSync } from "node:fs";
+for await (const line of createInterface({ input: process.stdin })) {
+  const frame = JSON.parse(line);
+  if (frame.id === undefined) continue;
+  let result = {};
+  if (frame.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} } };
+  if (frame.method === "tools/list") result = { tools: ["get_desktop_state", "click"].map(name => ({ name, inputSchema: { type: "object", additionalProperties: false } })) };
+  if (frame.method === "tools/call") {
+    appendFileSync(process.env.FAKE_DOCKER_LOG, "cua-tool:" + frame.params.name + "\\n");
+    result = frame.params.name === "get_desktop_state" ? { content: [{ type: "image", mimeType: "image/png", data: readFileSync(process.env.FAKE_DOCKER_DIR + "/screenshot.b64", "utf8").trim() }] } : { content: [] };
+  }
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }) + "\\n");
+}
+`);
     writeFileSync(join(fakeBin, "image.json"), imageInspectJson());
     writeFileSync(join(fakeBin, "container.json.tpl"), containerInspectTemplate());
     const png = Buffer.concat([
@@ -287,6 +305,115 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
     } finally { rmSync(marker, { force: true }); }
   });
 
+  it("shares one installation-owned desktop, serializes human control, and survives bot deletion", async () => {
+    expect((await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
+    const alpha = (await api("POST", "/api/bots")).body.bot;
+    const beta = (await api("POST", "/api/bots")).body.bot;
+    for (const bot of [alpha, beta]) {
+      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+        computer: "cloud", cloudBackend: "vps", vpsDesktopMode: "shared",
+      })).status).toBe(200);
+    }
+    const first = await api("GET", `/api/bots/${alpha.id}/computer`);
+    const second = await api("GET", `/api/bots/${beta.id}/computer`);
+    expect(first.body.container_name).toBe(vpsContainerName(sharedVpsOwnerId("production-vps")));
+    expect(second.body.container_name).toBe(first.body.container_name);
+    expect(first.body.sharedDesktop.mode).toBe("shared");
+    const unreachable = join(dirname(dockerLog), "unreachable.production-vps");
+    writeFileSync(unreachable, "offline");
+    try {
+      const failed = await api("POST", `/api/bots/${beta.id}/computer/provision`, {});
+      expect(failed.status).toBe(409);
+      expect(failed.body.error).toMatch(/Docker over SSH/i);
+    } finally { rmSync(unreachable, { force: true }); }
+    expect((await api("POST", `/api/bots/${beta.id}/computer/provision`, {})).body.ready).toBe(true);
+    const lease = "a".repeat(24);
+    const takeover = await api("POST", `/api/bots/${alpha.id}/computer/control`, { action: "take", controlLeaseId: lease });
+    expect(takeover.body).toMatchObject({ held: true, owned: true });
+    expect((await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop.controller).toBe("person");
+    expect((await api("POST", `/api/bots/${beta.id}/computer/join`, {})).status).toBe(200);
+    const observed = await api("POST", `/api/bots/${beta.id}/computer/screenshot`, {});
+    expect(observed.status).toBe(200);
+    expect(observed.body.inputPermitted).toBe(false);
+    expect(observed.body.controller).toBe("person");
+    expect(typeof observed.body.png).toBe("string");
+    expect((await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop.controller).toBe("person");
+    const secondLease = "b".repeat(24);
+    const queuedPerson = api("POST", `/api/bots/${beta.id}/computer/control`, { action: "take", controlLeaseId: secondLease });
+    await until(async () => (await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop.waitingQueue.some((entry: { id: string }) => entry.id === "person"), "the second person joining the queue");
+    expect((await api("POST", `/api/bots/${beta.id}/computer/remove`, {})).status).toBe(409);
+    expect((await api("POST", `/api/bots/${alpha.id}/computer/control`, { action: "release", controlLeaseId: lease })).body.released).toBe(true);
+    expect((await queuedPerson).body).toMatchObject({ held: true, owned: true });
+    expect((await api("POST", `/api/bots/${beta.id}/computer/control`, { action: "release", controlLeaseId: secondLease })).body.released).toBe(true);
+    expect((await api("GET", `/api/desktop-viewer/vps/${beta.id}`)).status).toBe(403);
+    const offset = readFileSync(dockerLog, "utf8").length;
+    expect((await api("DELETE", `/api/bots/${alpha.id}`)).status).toBe(200);
+    expect(readFileSync(dockerLog, "utf8").slice(offset)).not.toMatch(/ rm -f /);
+    expect((await api("GET", `/api/bots/${beta.id}/computer`)).body.container_name).toBe(second.body.container_name);
+  }, 30_000);
+
+  it("queues distinct shared bots, cancels a person waiting, and hands the desktop to the next bot", async () => {
+    await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } });
+    const alpha = (await api("POST", "/api/bots")).body.bot;
+    const beta = (await api("POST", "/api/bots")).body.bot;
+    for (const [bot, engine] of [[alpha, "vps"], [beta, "asker"]] as const) {
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { name: engine, computer: "cloud", cloudBackend: "vps", vpsDesktopMode: "shared", modelSelection: { instanceId: engine, model: "fake-model" } })).status).toBe(200);
+    }
+    for (const path of [gateFile, askerGate, `${acpDump}.mcp.json`, `${askerDump}.mcp.json`]) rmSync(path, { force: true });
+    const first = (await api("POST", `/api/bots/${alpha.id}/tasks`, { title: "Shared first" })).body.task;
+    const second = (await api("POST", `/api/bots/${beta.id}/tasks`, { title: "Shared second" })).body.task;
+    const control = (dump: string) => {
+      const mounts = JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8"));
+      const computer = mounts.find((mount: any) => mount.name === "computer");
+      const value = (name: string) => computer.env.find((entry: any) => entry.name === name)?.value ?? "";
+      expect(value("OMB_VPS_RECONNECT")).toBe("1");
+      return createControlClient({ url: value("OMB_CONTROL_URL"), token: value("OMB_CONTROL_TOKEN") });
+    };
+    try {
+      await api("POST", `/api/bots/${alpha.id}/messages`, { threadId: first.threadId, text: "Use the shared desktop" });
+      await until(async () => existsSync(`${acpDump}.mcp.json`), "the first shared bot mount");
+      const firstControl = control(acpDump);
+      expect(await firstControl.state(true)).toMatchObject({ held: false });
+      const mounted = JSON.parse(readFileSync(`${acpDump}.mcp.json`, "utf8"));
+      const computer = mounted.find((mount: { name: string; env?: Array<{ name: string; value: string }> }) => mount.name === "computer");
+      const gateUrl = computer.env.find((entry: { name: string }) => entry.name === "OMB_CONTROL_URL").value as string;
+      const gateToken = computer.env.find((entry: { name: string }) => entry.name === "OMB_CONTROL_TOKEN").value as string;
+      const gate = (query: string) => fetch(`${gateUrl}&${query}`, { headers: { authorization: `Bearer ${gateToken}` } }).then((response) => response.json());
+      const rpc = async (name: string) => {
+        const response = await fetch(gateUrl.replace("/computer-control", "/shared-vps/mcp"), { method: "POST", headers: { authorization: `Bearer ${gateToken}`, "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: {} } }) });
+        expect(response.status).toBe(200); return (await response.json() as { result: unknown }).result;
+      };
+      expect(await rpc("click")).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringContaining("fresh get_desktop_state") }] });
+      expect(await gate("phase=seen")).toMatchObject({ held: true, blockedReason: expect.stringContaining("not accepted") });
+      expect(await rpc("click")).toHaveProperty("isError", true);
+      expect(await rpc("get_desktop_state")).toHaveProperty("content");
+      expect(await rpc("click")).toEqual({ content: [] });
+      expect(await gate("phase=end")).toMatchObject({ held: true, blockedReason: expect.stringContaining("not accepted") });
+      await api("POST", `/api/bots/${beta.id}/messages`, { threadId: second.threadId, text: "Work, then use the shared desktop" });
+      await until(async () => existsSync(`${askerDump}.mcp.json`), "the second shared bot mount");
+      const secondControl = control(askerDump);
+      expect(await secondControl.state(true)).toMatchObject({ held: true, blockedReason: CONTROL_BUSY });
+      const queued = (await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop;
+      expect(queued.activeBot.id).toBe(alpha.id);
+      expect(queued.waitingQueue.map((entry: any) => entry.id)).toContain(beta.id);
+      const cancel = new AbortController();
+      const person = fetch(`${BASE}/api/bots/${alpha.id}/computer/control`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "take", controlLeaseId: "queued-person-lease-1234" }), signal: cancel.signal }).catch(() => null);
+      await until(async () => (await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop.waitingQueue.some((entry: any) => entry.id === "person"), "the person's queued control request");
+      cancel.abort(); await person;
+      await until(async () => !(await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop.waitingQueue.some((entry: any) => entry.id === "person"), "cancelled person leaving the queue");
+      await api("POST", `/api/bots/${alpha.id}/interrupt`, { threadId: first.threadId });
+      await until(async () => (await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop.activeBot?.id === beta.id, "the next shared bot acquiring the desktop");
+      const resumed = await secondControl.state(true);
+      expect(resumed, JSON.stringify(resumed)).toMatchObject({ held: false });
+      expect((await api("GET", `/api/bots/${beta.id}/computer`)).body.sharedDesktop.activeBot.id).toBe(beta.id);
+      expect(await firstControl.state(true)).toMatchObject({ held: true });
+    } finally {
+      writeFileSync(gateFile, "open"); writeFileSync(askerGate, "open");
+      await api("POST", `/api/bots/${alpha.id}/interrupt`, { threadId: first.threadId });
+      await api("POST", `/api/bots/${beta.id}/interrupt`, { threadId: second.threadId });
+    }
+  }, 60_000);
+
   it.each([
     {
       settings: "customized resources and operator restart",
@@ -343,7 +470,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
   it("shares a canceled preview with retries and opens control without racing destructive actions", async () => {
     expect((await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
     const bot = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud", cloudBackend: "vps" });
+    await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud", cloudBackend: "vps", vpsDesktopMode: "per-bot" });
     const fixtureDir = dirname(dockerLog);
     const hold = join(fixtureDir, "hold-capture");
     const started = join(fixtureDir, "capture-started");
@@ -403,7 +530,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
     expect((await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
     const bot = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${bot.id}`, {
-      computer, cloudBackend: "vps", modelSelection: { instanceId: "vps", model: "fake-model" },
+      computer, cloudBackend: "vps", vpsDesktopMode: "per-bot", modelSelection: { instanceId: "vps", model: "fake-model" },
     });
     const fixtureDir = dirname(dockerLog);
     const hold = join(fixtureDir, "hold-capture");
@@ -502,7 +629,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
         name: "Remote hand",
         modelSelection: { instanceId: "vps", model: "fake-model" },
       });
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps", vpsDesktopMode: "per-bot" })).status).toBe(200);
       expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" })).status).toBe(200);
 
       const fixtureDir = dirname(dockerLog);
@@ -761,10 +888,10 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
       writeFileSync(join(dirname(dockerLog), "container.name.alpha-vps"), alphaName);
       writeFileSync(join(dirname(dockerLog), "container.name.production-vps"), betaName);
 
-      expect((await api("PATCH", `/api/bots/${alpha.id}`, { cloudBackend: "vps" })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${alpha.id}`, { cloudBackend: "vps", vpsDesktopMode: "per-bot" })).status).toBe(200);
       expect((await api("PATCH", `/api/bots/${alpha.id}`, { vpsAlias: "alpha-vps" })).status).toBe(200);
       expect((await api("PATCH", `/api/bots/${alpha.id}`, { computer: "cloud" })).status).toBe(200);
-      expect((await api("PATCH", `/api/bots/${beta.id}`, { cloudBackend: "vps" })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${beta.id}`, { cloudBackend: "vps", vpsDesktopMode: "per-bot" })).status).toBe(200);
       expect((await api("PATCH", `/api/bots/${beta.id}`, { computer: "cloud" })).status).toBe(200);
       expect((await botById(alpha.id)).vpsAlias).toBe("alpha-vps");
       expect((await botById(beta.id)).vpsAlias).toBeUndefined();
@@ -808,6 +935,13 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
       expect((await botById(alpha.id)).vpsAlias).toBe("alpha-vps");
 
       // A bot with no computer of its own chooses a server freely, then falls back to the default.
+      expect((await api("PATCH", `/api/bots/${alpha.id}`, { vpsDesktopMode: "shared" })).status).toBe(200);
+      writeFileSync(dockerLog, "");
+      expect((await api("PATCH", `/api/bots/${alpha.id}`, { vpsAlias: "gamma-vps" })).status).toBe(409);
+      expect((await api("PATCH", `/api/bots/${alpha.id}`, { vpsAlias: null })).status).toBe(409);
+      expect(new Set(hosts())).toEqual(new Set(["alpha-vps"]));
+      expect((await api("PATCH", `/api/bots/${alpha.id}`, { vpsDesktopMode: "per-bot" })).status).toBe(200);
+
       expect((await api("PATCH", `/api/bots/${free.id}`, { vpsAlias: "gamma-vps" })).status).toBe(200);
       expect((await botById(free.id)).vpsAlias).toBe("gamma-vps");
       expect((await api("PATCH", `/api/bots/${free.id}`, { vpsAlias: null })).status).toBe(200);
@@ -846,7 +980,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
     const leaving = (await api("POST", "/api/bots")).body.bot;
     const switching = (await api("POST", "/api/bots")).body.bot;
     for (const bot of [leaving, switching]) {
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps", vpsDesktopMode: "per-bot" })).status).toBe(200);
       expect((await api("PATCH", `/api/bots/${bot.id}`, { vpsAlias: "gone-vps" })).status).toBe(200);
     }
     // The provider cancelled the server, or the alias left ~/.ssh/config: nothing answers for gone-vps any more.

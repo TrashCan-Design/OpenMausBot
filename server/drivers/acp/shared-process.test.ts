@@ -90,6 +90,16 @@ afterEach(async () => {
 });
 
 describe("ACP threads sharing one agent process", () => {
+  it("isolates concurrent threads in one folder and never lends its MCP registration to another thread", async () => {
+    const f = await fixture();
+    const cwd = join(f.scratch, "same-folder"); mkdirSync(cwd, { recursive: true });
+    const [a, b] = await Promise.all([f.run("thread-a", { cwd }), f.run("thread-b", { cwd })]);
+    expect(a.done).toMatchObject({ ok: true }); expect(b.done).toMatchObject({ ok: true });
+    expect(f.spawned).toHaveLength(2);
+    await f.run("thread-a", { cwd }); expect(f.spawned).toHaveLength(2);
+    await f.run("thread-c", { cwd }); expect(f.spawned).toHaveLength(3);
+  });
+
   it("runs threads with the same spawn contract as separate sessions of one process, each on its own thread", async () => {
     const f = await fixture();
     const [a, b] = await Promise.all([f.run("thread-a"), f.run("thread-b")]);

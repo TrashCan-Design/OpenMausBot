@@ -11,6 +11,7 @@ import {
   restoreHeldChannelQueue,
   settleHeldChannelQueueHead,
 } from "../channel-queue.ts";
+import { join } from "node:path";
 import { DATA_DIR, type AppConfig } from "../config.ts";
 import type { ProviderInstance, SteerOutcome } from "../contracts.ts";
 import { cancelledChatFollowup } from "../message-db.ts";
@@ -21,10 +22,11 @@ import { clientGroupPatchViolation, requestSource, type RequestAuth } from "../r
 import type { RoomContextTracker } from "../room-context.ts";
 import { parseConversationTurnTimeout } from "../room-turn-timeout.ts";
 import type { RoutineManager } from "../routines.ts";
+import { openingBook, readOpeningSendId } from "../conversation-openings.ts";
 import { acceptedSendMatch, parseSendId, sendFingerprint, type SendSequencer } from "../send-idempotency.ts";
 import type { SkillReview } from "../skill-review.ts";
 import { assertWithinBudget } from "../spend.ts";
-import type { BotRecord, GroupRecord, GroupTaskPatch, Message, Store } from "../store.ts";
+import { UNTITLED_TASK, type BotRecord, type GroupRecord, type GroupTaskPatch, type Message, type Store } from "../store.ts";
 import type { ThreadStarters } from "../thread-starters.ts";
 import { extractSteerImages } from "../turn-images.ts";
 import type { UsageTrigger } from "../usage-ledger.ts";
@@ -145,8 +147,24 @@ export function createChannelRoutes(deps: ChannelRouteDeps): RouteHandler {
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
+      let sendId: string | undefined;
+      try { sendId = readOpeningSendId(body.sendId); }
+      catch (error) { return json(res, 400, { error: error instanceof Error ? error.message : "sendId must be a client-generated id" }); }
       const request = createGroupTaskRequestSchema.safeParse(body);
       if (!request.success) return json(res, 400, { error: "title must be text" });
+      const title = request.data.title?.trim().slice(0, 80) || UNTITLED_TASK;
+      if (sendId) {
+        const claimed = await openingBook(join(DATA_DIR, "conversation-openings.json")).claim(
+          { sendId, owner: "channel", ownerId: group.id, title },
+          () => store.createGroupTask(group.id, request.data.title),
+          (threadId) => store.groupTaskByThread(group.id, threadId) !== undefined,
+        );
+        if (!claimed.ok) return json(res, claimed.status, { error: claimed.error });
+        const existing = store.groupTaskByThread(group.id, claimed.threadId);
+        if (!existing) return json(res, 409, { error: "that conversation was removed; choose a new send id" });
+        if (!claimed.replayed && auth.kind === "session") threadStarters.set(existing.threadId, actorKey(auth));
+        return json(res, claimed.replayed ? 200 : 201, { group: own(groupWithThread(store.group(group.id)!)), task: existing });
+      }
       const task = store.createGroupTask(group.id, request.data.title);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       // Who opened it decides who may answer its cards on a shared workspace.

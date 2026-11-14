@@ -61,6 +61,16 @@ export function acpShellRequest(isShellCommand: boolean, rawInput: unknown, laun
   return { command: isShellCommand ? acpPermissionCommand(rawInput, launchCwd) : undefined, commandLine: shellRequest(command, undefined).commandLine };
 }
 
+/** A desktop tool. The agent's own session-wide allow would also cover the other desktop mounted as the same server. */
+export function acpDesktopTool(toolCall: { title?: unknown; rawInput?: unknown } | null | undefined): boolean {
+  const title = typeof toolCall?.title === "string" ? toolCall.title : "";
+  const raw = toolCall?.rawInput;
+  const named = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? String((raw as { server?: unknown }).server ?? (raw as { name?: unknown }).name ?? "")
+    : "";
+  return /(?:^|__)computer(?:__|$)/i.test(title) || /(?:^|__)computer(?:__|$)/i.test(named);
+}
+
 /** An ACP permission request's exact operation, for the driver's own session allow; null for a generic title with no input. */
 export function acpSessionOperationKey(toolCall: any): string | null {
   const rawInput = toolCall?.rawInput;

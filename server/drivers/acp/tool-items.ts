@@ -14,13 +14,15 @@ export function acpToolEndEvents(
   update: { status?: unknown; rawOutput?: unknown; content?: unknown },
   itemId: string | undefined,
   ended: Set<string>,
+  includeImages = true,
 ): AcpToolEndEvent[] {
   if (itemId !== undefined) {
     if (ended.has(itemId)) return [];
     ended.add(itemId);
   }
+  const images = includeImages ? extractMcpImages(update.content ?? update.rawOutput) : [];
   return [
     { type: "item.completed", itemType: "tool", itemId, ok: update.status !== "failed", output: toolDetailPreview(update.rawOutput ?? update.content) },
-    ...extractMcpImages(update.content ?? update.rawOutput).map((img): AcpToolEndEvent => ({ type: "item.completed", itemType: "assistant_image", data: img.data })),
+    ...images.map((img): AcpToolEndEvent => ({ type: "item.completed", itemType: "assistant_image", data: img.data })),
   ];
 }

@@ -97,6 +97,7 @@ export const MistralDriver: ProviderDriver<MistralConfig> = {
     return createOpenAIChatRuntime({
       input, driverKind: "mistral", apiKey, apiUrl: config.url,
       tools: config.tools, models: () => catalog, refreshModels, contentText,
+      computerUse: true, imageInput: () => true,
       requestBody: (model, messages, stream) => ({ model, messages, stream }),
       httpErrorLabel: "Mistral",
       missingKeyError: "Save a Mistral API key in Settings → API keys, or set MISTRAL_API_KEY.",

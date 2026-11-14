@@ -21,7 +21,7 @@ function hostWith(key: string | null) {
   const host = new AcpHost(child, key, { source: "test.acp", logMessage: (msg) => msg, keepStderr: true, unrouted: (msg) => refused.push(msg) });
   const heard = new Map<string, any[]>();
   const link = (threadId: string, sessionId: string | null) => {
-    const linked = host.link(threadId);
+    const linked = host.link(threadId, `/work/${threadId}`);
     linked.sessionId = sessionId;
     const inbox: any[] = [];
     heard.set(threadId, inbox);
@@ -32,6 +32,15 @@ function hostWith(key: string | null) {
 }
 
 describe("one ACP process for several threads", () => {
+  it("never reuses another thread's folder, even after its session closes", () => {
+    const h = hostWith("shared");
+    const a = h.link("a", "s-a");
+    expect(h.host.accepts(8, 32, "b", "/work/a")).toBe(false);
+    expect(h.host.accepts(8, 32, "b", "/work/b")).toBe(true);
+    a.close();
+    expect(h.host.accepts(8, 32, "b", "/work/a")).toBe(false);
+    expect(h.host.accepts(8, 32, "a", "/work/a")).toBe(true);
+  });
   it("gives each thread only its own session's traffic, and refuses a request for a session no thread holds", async () => {
     const h = hostWith("shared");
     const a = h.link("a", "s-a");

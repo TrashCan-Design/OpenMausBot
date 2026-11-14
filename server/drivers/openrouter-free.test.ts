@@ -92,8 +92,8 @@ describe("free OpenRouter models", () => {
   });
 
   it("prefers the listed models, then the first free tool-capable model", () => {
-    expect(freeDefault(FREE_TOOL_IDS)).toBe(PREFERRED);
-    expect(freeDefault(FREE_TOOL_IDS.filter((id) => id !== PREFERRED))).toBe("google/gemma-4-31b-it:free");
+    expect(freeDefault(FREE_TOOL_IDS)).toBe(FREE_MODEL_PREFERENCE[0]);
+    expect(freeDefault(FREE_TOOL_IDS.filter((id) => id !== FREE_MODEL_PREFERENCE[0]))).toBe(FREE_MODEL_PREFERENCE[1]);
     const unlisted = FREE_TOOL_IDS.filter((id) => !FREE_MODEL_PREFERENCE.includes(id));
     expect(freeDefault(unlisted)).toBe("xingchen-agi/xing4.0-29b-a4b:free");
     expect(freeDefault([])).toBeUndefined();
@@ -112,7 +112,7 @@ describe("free OpenRouter models", () => {
     const { calls } = stubOpenRouter({ freeTier: true });
     const instance = await openRouterInstance(key);
     try {
-      expect(instance.models.default).toBe(PREFERRED);
+      expect(instance.models.default).toBe(FREE_MODEL_PREFERENCE[0]);
       expect(instance.models.options.slice(0, FREE_TOOL_IDS.length).map((option) => option.id)).toEqual(FREE_TOOL_IDS);
       expect(instance.models.options.map((option) => option.id).sort()).toEqual(CATALOG.map((row) => row.id).sort());
       const label = (id: string) => instance.models.options.find((option) => option.id === id)?.label;
@@ -271,6 +271,7 @@ describe("OpenRouter failures in plain words", () => {
   });
 
   it("words an OpenRouter turn's refusal and sends a 402 only once", async () => {
+    process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE = "0.001";
     const { bodies } = stubOpenRouter({
       freeTier: false,
       chat: (body) => body.model.endsWith(":free")
@@ -288,8 +289,9 @@ describe("OpenRouter failures in plain words", () => {
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === "free");
       expect(errorFor("paid")).toBe(OPENROUTER_FAILURES.credits);
       expect(errorFor("free")).toBe(OPENROUTER_FAILURES.freeLimit);
-      expect(bodies.map((body) => body.model)).toEqual(["deepseek/deepseek-v4.1-flash-1017", PREFERRED]);
+      expect(bodies.map((body) => body.model)).toEqual(["deepseek/deepseek-v4.1-flash-1017", PREFERRED, PREFERRED, PREFERRED]);
     } finally {
+      delete process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE;
       recorder.stop();
       await instance.dispose();
     }

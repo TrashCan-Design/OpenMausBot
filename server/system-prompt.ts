@@ -5,6 +5,7 @@ import { agentsToolBridged } from "./drivers/agents-bridge.ts";
 import { teammateAvailabilityPrompt, type RosterMember } from "./peer-roster.ts";
 import type { ConnectorToolGrant } from "../shared/wire.ts";
 import { loginLabel, type LoginPlace } from "../shared/logins.ts";
+import { vaultNameKey } from "../shared/vault.ts";
 import { isConversational, type ReplyStyle } from "../shared/reply-style.ts";
 import { REPLY_HABITS_PROMPT } from "./reply-habits.ts";
 
@@ -83,17 +84,18 @@ export function buildSystemPrompt(
 }
 
 // "box" is Boat's persisted kind literal.
-export type ComputerPromptKind = "vm-private" | "vm-shared" | "box" | "vps" | "local";
+export type ComputerPromptKind = "vm-private" | "vm-shared" | "box" | "vps" | "vps-shared" | "local";
 
 export type ComputerPromptKindInput = {
   kind: "vm" | "box" | "vps" | "local" | null;
   vmPrivate: boolean;
+  vpsShared?: boolean;
 };
 
 export function resolveComputerPromptKind(input: ComputerPromptKindInput): ComputerPromptKind | null {
   if (input.kind === "vm") return input.vmPrivate ? "vm-private" : "vm-shared";
   if (input.kind === "box") return "box";
-  if (input.kind === "vps") return "vps";
+  if (input.kind === "vps") return input.vpsShared ? "vps-shared" : "vps";
   if (input.kind === "local") return "local";
   return null;
 }
@@ -106,7 +108,7 @@ export const SIGN_IN_PROMPT =
 /** The Local VM and VPS image's Cua Driver refuses background X11 keys there (they need /dev/uinput, which the hardened
  * container lacks) and pixel clicks on a window this session has not read; the bot is told up front rather than per refusal. */
 export const SANDBOX_DESKTOP_INPUT =
-  " On this desktop, read a window with get_window_state before acting on it and take x,y from that window's own screenshot. Pass delivery_mode \"foreground\" for keys, typing, scrolling and pixel clicks: background input is not available here, and foreground moves focus only inside this desktop, never on the user's own screen.";
+  " On this desktop, read a window with get_window_state before acting on it and take x,y from that window's own screenshot. Pass delivery_mode \"foreground\" for keys, typing, scrolling and pixel clicks: background input is not available here, and foreground moves focus only inside this desktop, never on the user's own screen. If an accessibility type or click changed nothing, read that window again and type in the foreground; a browser search may use Firefox's address bar. Never repeat a key, type, click, or navigation whose result timed out or was not confirmed. A task that names Firefox uses the Firefox already open on this desktop.";
 
 const COMPUTER_PARAGRAPH: Record<ComputerPromptKind, string> = {
   "vm-private":
@@ -116,6 +118,8 @@ const COMPUTER_PARAGRAPH: Record<ComputerPromptKind, string> = {
   box: " You control the assigned cloud computer. Inspect it with screenshots; click coordinates refer to the full image. Use the advertised computer tools for desktop actions and shell commands.",
   vps:
     " You have your own self-hosted remote Linux computer through the official Cua tools. This is the user's own VPS; using it does not require a Boat API key. Its filesystem is disposable: everything on it is wiped whenever its container is recreated, so keep long-lived work somewhere durable — push it to a remote, or hand the results back in chat — instead of leaving it only on that computer. Inspect the desktop state before acting, prefer accessibility targets over raw coordinates, and act carefully." + SANDBOX_DESKTOP_INPUT,
+  "vps-shared":
+    " You use the shared self-hosted Linux desktop through the Cua tools. This is the user's own VPS; the AI engine and agent run locally. Other authorized bots use the same browser sessions, installed apps and files. You may read get_desktop_state while someone else controls the desktop: that is observation, it does not reserve the desktop, and the screen can change under you. Clicks, typing, scrolling, shell, browser navigation, files and every other computer call need your own turn in control. After you gain control, take a fresh get_desktop_state before acting; an earlier observation is stale. If the desktop is busy or a call is denied, do unrelated work. Do not bypass a denial through another tool. Local shell and browser tools on the host are separate from the VPS desktop. Its files remain in the container across app restarts, but recreating or removing the container erases them, so keep long-lived work elsewhere too." + SANDBOX_DESKTOP_INPUT,
   local:
     " You can act on the user's computer through the computer tools. Discover the target app/window and inspect its state first. Prefer window-targeted accessibility actions with background delivery so the user can keep working in another app; do not bring OpenBot or another app to the front just to inspect it. Use the dedicated browser tools for browser work when available, keeping the user's intended browser profile/account, and OpenBot's configuration/proposal tools for supported bot setup rather than clicking through this app. Full-desktop input, app activation, and foreground delivery can move the real cursor, change focus, or switch desktops: use them only when the user asked for foreground control or agrees after background control reports it cannot perform the action. Do not silently retry a background refusal as foreground input, including through shell scripts, AppleScript/System Events, or another automation tool. If a background action unexpectedly changes focus, report it and stop that route rather than continuing to interrupt the user. Never promise that arbitrary desktop actions can run in the background.",
 };
@@ -125,6 +129,23 @@ export function savedLoginsPrompt(logins: ReadonlyArray<LoginPlace & { username:
   const shown = logins.slice(0, 40).map(loginLabel);
   const more = logins.length > shown.length ? ` and ${logins.length - shown.length} more` : "";
   return ` Your saved logins, for fill_login on these sites and their sign-in pages: ${shown.join(", ")}${more}.`;
+}
+
+const SECRET_NAMES_SHOWN = 40;
+const SECRET_NAME_SHOWN_MAX = 80;
+
+/** Names only, never a value. */
+export function savedSecretsPrompt(secrets: ReadonlyArray<{ name: string; refOnly?: true }>): string {
+  const names = new Map<string, string>();
+  for (const secret of [...secrets].sort((a, b) => Number(Boolean(a.refOnly)) - Number(Boolean(b.refOnly)))) {
+    const name = secret.name.replace(/[\p{Cc}\s]+/gu, " ").trim().slice(0, SECRET_NAME_SHOWN_MAX);
+    const key = vaultNameKey(name);
+    if (key && !names.has(key)) names.set(key, `${JSON.stringify(name)}${secret.refOnly ? " (ref only)" : ""}`);
+  }
+  if (!names.size) return "";
+  const shown = [...names.values()].slice(0, SECRET_NAMES_SHOWN);
+  const more = names.size > shown.length ? ` and ${names.size - shown.length} more` : "";
+  return ` Secrets in the Vault you may use: ${shown.join(", ")}${more}. To use one, call request_credential with its name as the label: OpenBot hands it over at once with no card, and you never see the value.`;
 }
 
 export function computerPrompt(kind: ComputerPromptKind | null): string {

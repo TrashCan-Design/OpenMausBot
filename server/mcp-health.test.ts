@@ -89,6 +89,34 @@ describe("checking that command servers start", () => {
     expect(health.usable("iris", { notes })).toEqual({});
   });
 
+  it("discards a probe that was already running when a restart was requested, then probes once more", async () => {
+    const answers: Array<(ok: boolean) => void> = [];
+    let calls = 0;
+    const { deps } = fixture();
+    const health = createMcpHealth({
+      ...deps,
+      start: async () => {
+        calls += 1;
+        const ok = await new Promise<boolean>((resolve) => answers.push(resolve));
+        return ok ? { ok: true } : { ok: false, error: "handshake failed" };
+      },
+    });
+    const pending = health.prepare("paul", ["notes"]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toBe(1);
+    health.changed("notes");
+    expect(calls).toBe(1);
+    answers[0]?.(false);
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls).toBe(2);
+    expect(health.off("paul", ["notes"])).toEqual([]);
+    answers[1]?.(true);
+    await health.settled();
+    expect(Object.keys(health.usable("paul", { notes }))).toEqual(["notes"]);
+    expect(calls).toBe(2);
+  });
+
   it("checks a server afresh once its command line changes", async () => {
     const servers: Record<string, StdioMcpSpec> = { notes };
     const { health, starts } = fixture({ servers });

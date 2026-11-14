@@ -147,26 +147,16 @@ describe.skipIf(process.platform === "win32")("direct final-screen settlement", 
     expect(messages.some((message: any) => message.role === "bot" && typeof message.text === "string" &&
       withoutTurnClock(message.text).startsWith("reply to: ") && message.text.endsWith("FOLLOWUP_AFTER_SCREEN"))).toBe(true);
     expect(messages.some((message: any) => message.tool?.name?.includes("another thread is working"))).toBe(false);
-    const screenIndex = messages.findIndex((message: any) => message.kind === "screen");
-    expect(screenIndex).toBeGreaterThanOrEqual(0);
-    expect(screenIndex).toBeLessThan(
-      messages.findIndex((message: any) => message.text === "FOLLOWUP_AFTER_SCREEN"));
+    expect(messages.some((message: any) => message.kind === "screen")).toBe(false);
   }, 30_000);
 
-  it("sends the settled screenshot to live clients without its pixels; the image route serves them", async () => {
+  it("finishes the turn without posting the captured screen into the conversation", async () => {
     await beginCapture();
     gate("capture.gate");
-    const frame = await events.until((candidate) => candidate.kind === "message" &&
-      candidate.threadId === threadId && candidate.message?.kind === "screen", 15_000);
-    expect(frame.message).toMatchObject({ hasImage: true, mime: "image/jpeg" });
-    expect(frame.message.png).toBeUndefined();
-    expect(JSON.stringify(frame)).not.toContain("/9j/4AAQ");
-    const image = await fetch(`${session.info.url}/api/threads/${threadId}/messages/${frame.message.id}/image`,
-      { headers: { origin: session.info.url } });
-    expect(image.status).toBe(200);
-    expect(image.headers.get("content-type")).toBe("image/jpeg");
-    expect(image.headers.get("cache-control")).toBe("private, no-store");
-    expect(Buffer.from(await image.arrayBuffer()).toString("base64")).toBe(JPEG);
+    await expect.poll(async () => (await bot()).busy, { timeout: 15_000 }).toBe(false);
+    const messages = (await bot()).messages;
+    expect(messages.some((message: any) => message.kind === "screen")).toBe(false);
+    expect(events.frames.some((frame) => frame.kind === "message" && frame.message?.kind === "screen")).toBe(false);
   }, 30_000);
 
   it("bounds capture settlement and discards a late frame after the thread is deleted", async () => {

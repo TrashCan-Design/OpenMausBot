@@ -3,7 +3,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { RuntimeEvent, SendTurnInput } from "../contracts.ts";
@@ -897,6 +897,8 @@ describe("createOpenAIChatRuntime HTTP error text", () => {
 });
 
 describe("createOpenAIChatRuntime rejected keys", () => {
+  beforeEach(() => { process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE = "0.001"; });
+  afterEach(() => { delete process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE; });
   const create = (key: string) => OpenAICompatDriver.create({
     instanceId: "openaiCompat", displayName: "Other", enabled: true,
     config: OpenAICompatDriver.decodeConfig({ url: "https://rejected-key.invalid/v1" }),

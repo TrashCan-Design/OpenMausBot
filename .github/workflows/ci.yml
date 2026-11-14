@@ -101,6 +101,9 @@ jobs:
       - name: Validate locale catalogs
         run: pnpm i18n:check
       - run: pnpm lint
+      - name: Shared desktop safety regression
+        if: steps.scope.outputs.build == 'true'
+        run: pnpm exec vitest run server/shared-vps-gateway.test.ts server/shared-vps-seat.test.ts server/shared-vps-host.test.ts server/shared-vps-proxy.test.ts server/mcp-schema-validator.test.ts server/drivers/acp/host.test.ts server/headless/connect.test.ts server/vps-routing.test.ts server/mcp-bridge.test.ts src/components/SharedVpsDesktopControls.test.ts src/components/computer-takeover.test.ts src/components/ComputerPanel.takeover.test.ts
       # A pull request that changes only docs, tests under scripts/ or the
       # control plane cannot change what these three check.
       - if: steps.scope.outputs.build == 'true'

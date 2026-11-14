@@ -181,6 +181,7 @@ function hostileSources(overrides: Partial<UsageSources> = {}): UsageSources & {
 async function freshModules() {
   vi.resetModules();
   vi.doMock("posthog-js", () => ph.module());
+  if (!storage.has("omb-analytics-opt-out")) storage.set("omb-analytics-opt-out", "0");
   const analytics = await import("./analytics");
   const snapshot = await import("./usage-snapshot");
   await analytics.initAnalytics();

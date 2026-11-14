@@ -409,6 +409,18 @@ describe("Store", () => {
     expect(reloaded.taskByThread(bot.id, autoMismatch.threadId)!.surface).toBeUndefined();
   });
 
+  it("drops an automatic computer pin when that conversation changes model", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    store.patchTask(bot.id, bot.threadId, { surface: "cloud", surfaceSource: "auto" });
+    store.switchTaskModel(bot.id, bot.threadId, { instanceId: "codex", model: "fixture" }, false, false);
+    expect(store.taskByThread(bot.id, bot.threadId)?.surface).toBeUndefined();
+    expect(store.taskByThread(bot.id, bot.threadId)?.surfaceSource).toBeUndefined();
+    store.patchTask(bot.id, bot.threadId, { surface: "local", surfaceSource: "user" });
+    store.switchTaskModel(bot.id, bot.threadId, { instanceId: "claude", model: "opus" }, false, false);
+    expect(store.taskByThread(bot.id, bot.threadId)).toMatchObject({ surface: "local", surfaceSource: "user" });
+  });
+
   it("leaves bots.json alone when a save changes nothing, and writes the next real change", () => {
     const file = join(DATA_DIR, "bots.json");
     const store = new Store(selection);
@@ -1594,15 +1606,15 @@ describe("Store", () => {
     const store = new Store(selection);
     store.seedIfEmpty();
     const chief = store.bots[0]!;
-    expect(chief).toMatchObject({ name: "MausBot", color: "chrome", chiefOfStaff: true, defaultBot: {} });
+    expect(chief).toMatchObject({ name: "OpenBot", color: "chrome", chiefOfStaff: true, defaultBot: {} });
     expect(store.messagesFor(chief.threadId).map((message) => [message.kind, message.helperIntro, message.card?.options.length])).toEqual([["options", true, 4]]);
-    expect(store.messagesFor(chief.threadId)[0]!.text).toContain("Hey! I'm MausBot. I'm new here. I'm here to be your Chief of Staff.");
+    expect(store.messagesFor(chief.threadId)[0]!.text).toContain("Hey! I'm OpenBot. I'm new here. I'm here to be your Chief of Staff.");
     const later = Array.from({ length: 25 }, () => store.createBot());
     expect(later.map((bot) => bot.color)).not.toContain("silver");
     expect(later.map((bot) => bot.color)).not.toContain("chrome");
     expect(later[0]?.color).toBe("blue");
     expect(later.map((bot) => bot.name)).not.toContain("MausBot");
-    expect(new Store(selection).bot(chief.id)).toMatchObject({ name: "MausBot", color: "chrome", defaultBot: {} });
+    expect(new Store(selection).bot(chief.id)).toMatchObject({ name: "OpenBot", color: "chrome", defaultBot: {} });
   });
 
   it("seedIfEmpty leaves an existing workspace without a Chief as it is", () => {

@@ -164,7 +164,7 @@ it("a lent folder keeps working while the Mac is away: read from the copy, chang
     lending: lendingForFiles({ environment: () => env, sharing: () => connector, validate: validateSharedFolders }),
   });
   try {
-    // The person lends Notes with editing, as Settings → MausBot Cloud does.
+    // The person lends Notes with editing, as Settings → OpenBot Cloud does.
     await connector.saveCloud(env, { folders: [{ id: randomUUID(), path: notes, write: true }], screen: false, internet: false });
     await vi.waitFor(() => expect(connector.cloudState(env).connected).toBe(true), { timeout: 15_000 });
     // Files copies it by itself: nothing to choose.

@@ -65,27 +65,15 @@ describe("cloud computer tools", () => {
     ["open_url", { url: "https://example.com/?a='&b=2" }, "xdg-open"],
     ["exec", { command: "printf hello" }, "printf hello"],
     ["get_screen_size", {}, "getdisplaygeometry"],
-  ] as const)("runs %s on the assigned Boat only, with the server's own account", async (name, args, expected) => {
+  ] as const)("runs %s on the assigned Boat only, with the server's own account", async (name, args, _expected) => {
     const call = rpc({ method: "tools/call", params: { name, arguments: args } });
-    const result = await call.done as { isError?: boolean; content: Array<{ text?: string }> };
-    expect(result.isError).not.toBe(true);
-    if (name === "open_url") expect(result.content[0].text).toContain("Page loading is not confirmed");
-    expect(call.gated()).toBe(1);
-    expect(call.checks()).toBe(2);
-    expect(calls.map(entry => entry.path)).toEqual(["/sandboxes/bx_23456789/commands"]);
-    expect(calls[0].authorization).toBe("Bearer synthetic-box-key");
-    expect(calls[0].body.command).toContain("exec env -i");
-    expect(calls[0].body.command).toContain(expected);
-    expect(calls[0].body.command).not.toContain("synthetic-box-key");
-    if (name === "type_text") expect(calls[0].body.command).not.toContain("$(echo unsafe)");
+    await expect(call.done).rejects.toThrow(/Boat is unavailable in OpenBot/);
+    expect(calls).toEqual([]);
   });
 
   it("returns native-size screenshots as MCP images", async () => {
-    const result = await rpc({ method: "tools/call", params: { name: "screenshot", arguments: {} } }).done;
-    expect(result).toEqual({ content: [{ type: "image", mimeType: "image/jpeg", data: Buffer.from(jpeg, "base64").toString("base64") }] });
-    expect(calls[0].body.command).toContain("ogb-panel.jpg.model.jpg");
-    expect(calls[0].body.command).not.toContain("-resize");
-    expect(calls[1].path).toContain("ogb-panel.jpg.model.jpg");
+    await expect(rpc({ method: "tools/call", params: { name: "screenshot", arguments: {} } }).done).rejects.toThrow(/Boat is unavailable in OpenBot/);
+    expect(calls).toEqual([]);
   });
 
   it.each([
@@ -117,8 +105,8 @@ describe("cloud computer tools", () => {
         .resolves.toEqual({ isError: true, content: [{ type: "text", text: REDDIT_REFUSAL }] });
     }
     expect(calls).toHaveLength(0);
-    await tools.runCloudComputerTool(cfg, "bx_23456789", "open_url", { url: "https://notreddit.com/" }, new AbortController().signal);
-    expect(calls[0].body.command).toMatch(/xdg-open .*https:\/\/notreddit\.com\//);
+    await expect(tools.runCloudComputerTool(cfg, "bx_23456789", "open_url", { url: "https://notreddit.com/" }, new AbortController().signal)).rejects.toThrow(/Boat is unavailable in OpenBot/);
+    expect(calls).toHaveLength(0);
   });
 
   it.each([
@@ -137,12 +125,12 @@ describe("cloud computer tools", () => {
     // A cloud computer mounted before it existed: the gate's claim creates
     // it, and only then is there a Boat to act on.
     let started: string | undefined;
-    const result = await tools.cloudComputerRpc({ method: "tools/call", params: { name: "get_screen_size", arguments: {} } }, {
+    await expect(tools.cloudComputerRpc({ method: "tools/call", params: { name: "get_screen_size", arguments: {} } }, {
       cfg, boxId: () => started, signal: new AbortController().signal,
       gate: async () => { started = "bx_3456789a"; return { held: false }; }, assertActive: () => {},
-    }) as { isError?: boolean };
-    expect(result.isError).not.toBe(true);
-    expect(calls.map(entry => entry.path)).toEqual(["/sandboxes/bx_3456789a/commands"]);
+    })).rejects.toThrow(/Boat is unavailable in OpenBot/);
+    expect(started).toBe("bx_3456789a");
+    expect(calls).toEqual([]);
   });
 
   it("performs nothing when the gate let a call through and no Boat landed", async () => {
@@ -166,29 +154,18 @@ describe("cloud computer tools", () => {
   });
 
   it("aborts an in-flight Boat command without retrying it", async () => {
-    holdCommand = true;
-    const started = new Promise<void>(resolve => { commandStarted = resolve; });
     const abort = new AbortController();
-    const running = rpc({ method: "tools/call", params: { name: "exec", arguments: { command: "printf fixture" } } }, { held: false }, abort.signal).done;
-    const rejected = expect(running).rejects.toThrow();
-    await started;
-    abort.abort();
-    await rejected;
-    expect(calls.filter(entry => entry.path.endsWith("/commands"))).toHaveLength(1);
-    server.closeAllConnections();
+    await expect(rpc({ method: "tools/call", params: { name: "exec", arguments: { command: "printf fixture" } } }, { held: false }, abort.signal).done).rejects.toThrow(/Boat is unavailable in OpenBot/);
+    expect(calls).toEqual([]);
   });
 
   it("answers within its call budget, the gate's wait included, when the Boat holds a command", async () => {
-    holdCommand = true;
     const started = Date.now();
-    const result = await tools.cloudComputerRpc({ method: "tools/call", params: { name: "exec", arguments: { command: "sleep 600" } } }, {
+    await expect(tools.cloudComputerRpc({ method: "tools/call", params: { name: "exec", arguments: { command: "sleep 600" } } }, {
       cfg, boxId: () => "bx_23456789", signal: new AbortController().signal, budgetMs: 600, assertActive: () => {},
       gate: async () => { await new Promise(resolve => setTimeout(resolve, 300)); return { held: false }; },
-    });
-    expect(result).toEqual({ isError: true, content: [{ type: "text", text: tools.CLOUD_COMPUTER_LATE }] });
-    expect(Date.now() - started).toBeGreaterThanOrEqual(550);
-    expect(Date.now() - started).toBeLessThan(1_500);
-    expect(calls.filter(entry => entry.path.endsWith("/commands"))).toHaveLength(1);
-    server.closeAllConnections();
+    })).rejects.toThrow(/Boat is unavailable in OpenBot/);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(300);
+    expect(calls).toEqual([]);
   });
 });

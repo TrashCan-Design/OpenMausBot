@@ -109,7 +109,7 @@ import { groupTranscript, isStatusActivity, turnDurations, workedLabel } from "@
 import { StatusActivityRow } from "@/components/StatusActivityRow";
 import { CancelledTurnRow } from "./CancelledTurnRow";
 import { ActivityRun } from "./ActivityRun";
-import { TurnNarrationRun } from "./TurnNarrationRun";
+import { ThinkingText, TurnNarrationRun } from "./TurnNarrationRun";
 import { BubbleEditor } from "./BubbleEditor";
 import { ReplyBlocks } from "./ReplyBlocks";
 import { webhookMessageView } from "@/lib/webhook-message";
@@ -686,8 +686,8 @@ const MessagesList = memo(function MessagesList({
   onReply: (message: Message) => void;
 }) {
   const { botId, threadId, botName, botColor, bots, busy, hasMore, focus, showToolCalls, locale, simple = false } = useChatRows();
-  // A finished turn keeps the bot's progress lines and folds only its tool steps under "Worked for", in both modes.
-  const items = useMemo(() => groupTranscript(messages), [messages, locale]);
+  // A turn's narration and finished tools sit in one Thinking section. The answer stays outside it.
+  const items = useMemo(() => groupTranscript(messages, busy), [messages, locale, busy]);
   const newestMessageId = messages.at(-1)?.id;
   let newestUserMessageId: string | undefined;
   for (let i = messages.length - 1; i >= 0 && !newestUserMessageId; i--) {
@@ -713,15 +713,15 @@ const MessagesList = memo(function MessagesList({
         const newDay = needsStamp(prev, first, simple);
         const divider = dividerAbove(item.kind === "message" ? [item.message] : item.messages);
         if (item.kind === "turn" || item.kind === "run") {
-          if (!showToolCalls) return divider && <div key={item.id} className="contents">{divider}</div>;
+          if (!showToolCalls && (item.kind === "run" || !item.messages.some((step) => step.kind === "text"))) return divider && <div key={item.id} className="contents">{divider}</div>;
           const forceOpen = item.messages.some((step) => step.id === focusedId);
-          const steps = item.messages.map((step) => <div key={step.id} className="contents" data-mid={step.id}><ActivityChip message={step} place={place} /></div>);
+          const steps = item.messages.flatMap((step) => step.kind !== "text" && !showToolCalls ? [] : [<div key={step.id} className="contents" data-mid={step.id}>{step.kind === "text" ? <ThinkingText text={step.text ?? ""} /> : <ActivityChip message={step} place={place} />}</div>]);
           return (
             <div key={item.id} className="contents">
               {newDay && <DaySeparator at={first.at} today={today} simple={simple} />}
               {divider}
               {item.kind === "turn"
-                ? <TurnNarrationRun label={item.label} title={t("chat.run.showSteps")} forceOpen={forceOpen}>{steps}</TurnNarrationRun>
+                ? <TurnNarrationRun label={item.label} title={t("chat.run.showSteps")} forceOpen={forceOpen} threadId={threadId} turnId={item.turnId}>{steps}</TurnNarrationRun>
                 : <ActivityRun messages={item.messages} forceOpen={forceOpen}>{steps}</ActivityRun>}
             </div>
           );

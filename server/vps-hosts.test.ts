@@ -21,4 +21,12 @@ describe("which VPS host a bot uses", () => {
     expect(vpsAliasesInPlay({}, [{ vpsAlias: "alpha-vps" }])).toEqual(["alpha-vps"]);
     expect(vpsAliasesInPlay({}, [{}])).toEqual([]);
   });
+
+  it("keeps every shared bot on the configured default VPS regardless of a per-bot override", () => {
+    const cfg = { vps: { sshAlias: "gcp-vm" } };
+    const bot = { vpsAlias: "old-per-bot", vpsDesktopMode: "shared" as const };
+    expect(vpsSshAliasForBot(cfg, bot)).toBe("gcp-vm");
+    expect(vpsConfigForBot(cfg, bot)).toEqual(cfg);
+    expect(vpsSshAliasForBot({}, bot)).toBeNull();
+  });
 });

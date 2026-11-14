@@ -56,9 +56,10 @@ async function seal(
   context: Omit<PhoneSecretContext, "encapsulatedKey" | "ciphertext">,
   publicKey: CryptoKey,
   value = "elevenlabs-secret",
+  info = PHONE_SECRET_INFO,
 ): Promise<PhoneSecretContext> {
   const encrypted = await suite.seal(
-    { recipientPublicKey: publicKey, info: new TextEncoder().encode(PHONE_SECRET_INFO) },
+    { recipientPublicKey: publicKey, info: new TextEncoder().encode(info) },
     new TextEncoder().encode(value),
     phoneSecretAAD(context),
   );
@@ -108,6 +109,16 @@ describe("PhoneSecretBridge", () => {
       ciphertext: "CjM0CnBT8NYd_BHAXJRKFrbYrSw6OgMIlJLAKs8VUPSSCsa2",
     })).resolves.toBeUndefined();
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the original phone domain while still refusing metadata tampering", async () => {
+    const material = await keyMaterial();
+    const bridge = new PhoneSecretBridge(() => true, 200);
+    bridge.receive(material.message);
+    const envelope = await seal({ ...baseContext(material.keyId), target: "customSecret" }, material.publicKey, "legacy-domain-canary", "OpenBot phone credential v1");
+    await expect(bridge.open(envelope)).resolves.toBe("legacy-domain-canary");
+    await expect(bridge.open({ ...envelope, deviceId: "other-device" })).rejects.toMatchObject({ message: "The encrypted credential could not be verified" });
+    await expect(bridge.open({ ...envelope, botId: "other-bot" })).rejects.toMatchObject({ message: "The encrypted credential could not be verified" });
   });
 
   it("opens a custom secret's envelope for this server alone, never sending the value to the private parent", async () => {
@@ -274,7 +285,7 @@ describe("phoneSecretAAD", () => {
   it("refuses an AI provider key from a phone, which only the computer's own app saves where Settings does", () => {
     const context = { deviceId: "paired-device-1", target: "anthropicApiKey", requestKey: "credential-request-1" };
     expect(() => assertPhoneSecretRequestMatches(context, "paired-device-1", { target: "anthropicApiKey", requestKey: "credential-request-1" }))
-      .toThrow("Paste this key in OpenMausBot on your computer, or in My Cloud: a phone cannot save it yet.");
+      .toThrow("Paste this key in OpenBot on your computer, or in My Cloud: a phone cannot save it yet.");
     for (const target of ["composioApiKey", "customSecret"]) {
       expect(() => assertPhoneSecretRequestMatches({ ...context, target }, "paired-device-1", { target, requestKey: "credential-request-1" })).not.toThrow();
     }
@@ -284,7 +295,7 @@ describe("phoneSecretAAD", () => {
   it("refuses a 1Password token from a phone, saying where to paste it", () => {
     const context = { ...baseContext("AAAAAAAAAAAAAAAAAAAAAA"), target: "onePasswordToken" };
     expect(() => assertPhoneSecretRequestMatches(context, "paired-device-1", { target: "onePasswordToken", requestKey: "credential-request-1" }))
-      .toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/^Paste the 1Password token in OpenMausBot on your computer, or in My Cloud/u) }));
+      .toThrow(expect.objectContaining({ status: 409, message: expect.stringMatching(/^Paste the 1Password token in OpenBot on your computer, or in My Cloud/u) }));
   });
 
   it("gives an exact encrypted retry one stable desktop operation id", async () => {

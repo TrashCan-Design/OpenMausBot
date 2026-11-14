@@ -1,6 +1,3 @@
-# A version bump on main publishes the Windows installer and the updater feed
-# from the same commit. The first run must wait until the repository is renamed
-# and the new OpenBot release process is approved.
 name: OpenBot Windows release
 
 on:
@@ -18,6 +15,7 @@ concurrency:
 
 jobs:
   package:
+    if: github.ref == 'refs/heads/main' && github.repository == 'TrashCan-Design/OpenBot'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -59,6 +57,9 @@ jobs:
           cache: pnpm
       - if: steps.version.outputs.publish == 'true'
         run: pnpm install --frozen-lockfile
+      - name: Verify Windows shared desktop and release safety
+        if: steps.version.outputs.publish == 'true'
+        run: pnpm exec vitest run server/shared-vps-gateway.test.ts server/shared-vps-seat.test.ts server/shared-vps-host.test.ts server/shared-vps-proxy.test.ts server/phone-secret.test.ts scripts/testing/index-route-ratchet.test.ts scripts/windows-release.test.ts scripts/package-win-workflow.test.ts
       - if: steps.version.outputs.publish == 'true'
         run: pnpm package:win
         env:
@@ -80,18 +81,7 @@ jobs:
           test -s "$res/app-update.yml"
           grep -Fxq 'owner: TrashCan-Design' "$res/app-update.yml"
           grep -Fxq 'repo: OpenBot' "$res/app-update.yml"
-          node --input-type=module - "$VERSION" <<'EOF'
-          import { createHash } from 'node:crypto';
-          import { readFileSync, statSync } from 'node:fs';
-          import { parse } from 'yaml';
-          const version = process.argv[2], file = `OpenBot-${version}-setup.exe`;
-          const feed = parse(readFileSync('release/latest.yml', 'utf8'));
-          const entry = feed.files?.find((item) => item.url === file);
-          if (feed.version !== version || !entry || entry.size !== statSync(`release/${file}`).size ||
-            entry.sha512 !== createHash('sha512').update(readFileSync(`release/${file}`)).digest('base64')) {
-            throw new Error('The updater feed does not match the installer');
-          }
-          EOF
+          node scripts/windows-release.mjs validate release
       - name: Verify packaged browser and server
         if: steps.version.outputs.publish == 'true'
         shell: bash
@@ -108,8 +98,6 @@ jobs:
           set -euo pipefail
           cd release
           sha256sum "OpenBot-$VERSION-setup.exe" > SHA256SUMS.txt
-          gh release create "v$VERSION" \
-            "OpenBot-$VERSION-setup.exe" "OpenBot-$VERSION-setup.exe.blockmap" latest.yml SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "OpenBot $VERSION" --generate-notes --draft
-          gh release edit "v$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          git rev-parse HEAD > SOURCE_COMMIT.txt
+          cd ..
+          node scripts/windows-release.mjs publish release

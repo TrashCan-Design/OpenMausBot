@@ -1,4 +1,5 @@
 import { isCitationAttachment, serializeCitation, type CitationAttachment } from "./citations.ts";
+import { FILE_MAX_BYTES } from "../../shared/upload-limits.ts";
 export { dataContextFor, type DataContext, type DataViewContext } from "../../shared/data-context.ts";
 
 export type PasteAttachment = {
@@ -104,7 +105,7 @@ export function fileAttachment(name: string, path: string, size: number): FileAt
 
 /** Must match the server's IMAGE_MAX_BYTES. */
 export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-export const FILE_MAX_BYTES = 25 * 1024 * 1024;
+export { FILE_MAX_BYTES, PREVIEW_MAX_BYTES } from "../../shared/upload-limits.ts";
 /** Must match the server's TURN_IMAGE_MAX_COUNT: a message carrying more images is refused at send. */
 export const TURN_IMAGE_MAX_COUNT = 4;
 
@@ -339,6 +340,26 @@ export async function imageAttachmentFromFile(
   };
 }
 
+export type AttachProblem =
+  | { kind: "too-large"; name: string; limitMb: number }
+  | { kind: "unsupported"; names: string[] }
+  | { kind: "archives"; names: string[] }
+  | { kind: "image-limit"; names: string[] }
+  | { kind: "upload-failed"; name: string; reason: string };
+
+type TooLarge = Extract<AttachProblem, { kind: "too-large" }>;
+
+export class AttachError extends Error {
+  readonly problem: TooLarge;
+  readonly status = 413;
+  constructor(name: string, limitBytes: number) {
+    const limitMb = Math.round(limitBytes / (1024 * 1024));
+    super(`${name} exceeds ${limitMb} MB`);
+    this.name = "AttachError";
+    this.problem = { kind: "too-large", name, limitMb };
+  }
+}
+
 /** Copied into the private store so the companion route never sees an arbitrary Finder path. */
 export async function fileAttachmentFromFile(file: File): Promise<FileAttachment | null> {
   const declared = file.type.split(";", 1)[0]!.trim().toLowerCase();
@@ -346,9 +367,7 @@ export async function fileAttachmentFromFile(file: File): Promise<FileAttachment
   const mime = documentMime(file) ??
     (ACCEPTED_AUDIO_MIMES.has(declared) ? declared : AUDIO_MIMES_BY_EXTENSION[extension]);
   if (!mime) return null;
-  if (file.size > FILE_MAX_BYTES) {
-    throw Object.assign(new Error(`${file.name} exceeds 25 MB`), { status: 413 });
-  }
+  if (file.size > FILE_MAX_BYTES) throw new AttachError(file.name, FILE_MAX_BYTES);
   const uploadId = newUploadId();
   const saved = await uploadWithRetry<{ path: string; name: string; bytes: number }>(
     `/api/files?name=${encodeURIComponent(file.name)}&uploadId=${encodeURIComponent(uploadId)}`,

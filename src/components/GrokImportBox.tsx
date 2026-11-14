@@ -78,6 +78,7 @@ export function GrokImportView(props: GrokImportViewProps) {
       {!bare && <GrokBotMark size={25} />}
       {!bare && <h3 className="mt-3 text-[14px] font-medium text-ink">{t("grokImport.title")}</h3>}
       <p className={cn("text-[13px] leading-relaxed text-ink-secondary", !bare && "mt-1")}>{t("grokImport.hint")}</p>
+      <p className="mt-2 text-[13px] leading-relaxed text-ink">{t("grokImport.steps")}</p>
       <div className="mt-4 flex gap-2">
         <input
           value={url}
@@ -102,6 +103,7 @@ export function GrokImportView(props: GrokImportViewProps) {
           <div className="flex items-center gap-2 text-[14px] font-medium text-ink"><GrokBotMark size={15} />{card.name}</div>
           {card.creator && <div className="text-[12px] text-ink-secondary">{t("grokImport.by", { name: card.creator })}</div>}
           {card.description && <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{card.description}</p>}
+          {!card.export && <p className="mt-1.5 text-[12px] text-ink-secondary">{t("grokImport.publicNote")}</p>}
           <CursorLine cursor={props.cursor} card={card} onSignIn={props.onCursorSignIn} onSignOut={props.onCursorSignOut} />
           <button onClick={props.onStarter} className={`mt-3 ${chip}`}>
             <Sparkles size={13} />

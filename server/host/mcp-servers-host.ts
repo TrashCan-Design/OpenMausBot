@@ -9,6 +9,7 @@ import type { McpServerSpec, StdioMcpSpec } from "../contracts.ts";
 import { addBotMcpServer, claimBotMcpServers, withoutBotMcpServers, type BotMcpServerAdd } from "../mcp-bot-servers.ts";
 import { createMcpHealth, nameList, toolLabel, type McpHealthDeps } from "../mcp-health.ts";
 import { probeMcpServer } from "../mcp-probe.ts";
+import { MCP_RESTART_ENV } from "../mcp-app-catalog.ts";
 import { isRemoteMcpServer, parseStoredMcpServer } from "../mcp-registry.ts";
 import { canUseMcpServer } from "../../shared/tool-scope.ts";
 
@@ -52,6 +53,15 @@ export function enabledCommandServers(cfg: AppConfig): Record<string, StdioMcpSp
   return out;
 }
 
+/** An engine keeps a command server's process until its spec changes, so a restart has to show in the spec.
+ * Counted since this server started: its processes go with it. */
+function withRestarts(servers: Record<string, McpServerSpec>, restarts: ReadonlyMap<string, number>): Record<string, McpServerSpec> {
+  return Object.fromEntries(Object.entries(servers).map(([name, server]) => {
+    const count = restarts.get(name);
+    return [name, count && "command" in server ? { ...server, env: { ...server.env, [MCP_RESTART_ENV]: String(count) } } : server];
+  }));
+}
+
 export function createMcpServersHost(deps: McpServersHostDeps) {
   const configured = (bot: Bot): Record<string, McpServerSpec> => deps.policy(customMcpServers(deps.cfg(), bot.mcpServers, bot.id));
   /** None on an AI that starts no servers, and only those its tool selection reaches. */
@@ -61,6 +71,7 @@ export function createMcpServersHost(deps: McpServersHostDeps) {
     const result = await probeMcpServer({ ...server, enabled: true }, undefined, undefined, { asBot: { id: botId, cwd: existsSync(own) ? own : deps.dataDir } });
     return result.ok ? { ok: true } : { ok: false, error: result.error };
   });
+  const restarts = new Map<string, number>();
   const health = createMcpHealth({
     file: join(deps.dataDir, "mcp-health.json"),
     servers: () => enabledCommandServers(deps.cfg()),
@@ -71,7 +82,20 @@ export function createMcpServersHost(deps: McpServersHostDeps) {
 
   return {
     health,
-    mounted: (bot: Bot): Record<string, McpServerSpec> => health.usable(bot.id, configured(bot)),
+    mounted: (bot: Bot): Record<string, McpServerSpec> => withRestarts(health.usable(bot.id, configured(bot)), restarts),
+    /** The next turn starts a new process. Saved keys, sign-in, apps and which bot owns it stay as they are. */
+    restart(name: string): { ok: true } | { ok: false; status: number; error: string } {
+      const parsed = parseStoredMcpServer(name, deps.cfg().mcpServers?.[name]);
+      if (!parsed.ok) return { ok: false, status: 404, error: "MCP server not found." };
+      if (isRemoteMcpServer(parsed.server)) return { ok: false, status: 400, error: `${name} is reached by its address, so it has no process to restart.` };
+      if (!parsed.server.enabled) return { ok: false, status: 409, error: `${name} is off.` };
+      restarts.set(name, (restarts.get(name) ?? 0) + 1);
+      health.changed(name);
+      return { ok: true };
+    },
+    forgetRestart(name: string): void {
+      restarts.delete(name);
+    },
     prepare: (bot: Bot): Promise<void> => health.prepare(bot.id, started(bot)),
     off: (bot: Bot) => health.off(bot.id, started(bot)),
     listing: <T extends { name: string }>(server: T): T & { offFor?: string[] } => {

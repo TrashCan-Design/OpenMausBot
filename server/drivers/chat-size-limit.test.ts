@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SendTurnInput } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
@@ -94,6 +94,8 @@ describe("smallerResend", () => {
 });
 
 describe("an OpenAI-compatible provider that refuses large requests", () => {
+  beforeEach(() => { process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE = "0.001"; });
+  afterEach(() => { delete process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE; });
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
@@ -212,8 +214,8 @@ describe("an OpenAI-compatible provider that refuses large requests", () => {
     const f = await provider(() => ({ status, body }));
     const done = await f.run({ transcript: transcript(20, 3_000) });
     expect(done).toMatchObject({ ok: false });
-    expect(f.requests).toHaveLength(1);
-    expect(f.retries()).toEqual([]);
+    expect(f.requests).toHaveLength(status === 400 ? 1 : 3);
+    expect(f.retries().filter((r) => r.reason === "request_too_large")).toEqual([]);
     expect(f.errors()).toEqual([message]);
   });
 });

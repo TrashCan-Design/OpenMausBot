@@ -10,6 +10,9 @@ const fixture = vi.hoisted(() => ({
   held: false,
   /** Whether a take with a lease gets it: false plays a hold someone else already has. */
   owned: true,
+  sharedStatus: false,
+  advanced: false,
+  statusReads: 0,
   controls: [] as Array<{ action?: string; controlLeaseId?: string }>,
   posts: [] as string[],
   beacons: [] as Array<{ url: string; body: Record<string, unknown>; keepalive: boolean }>,
@@ -29,7 +32,7 @@ vi.mock("./DesktopCapabilities", async (importOriginal) => ({
     },
   }),
 }));
-vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => false, setAdvancedMode: () => {} }));
+vi.mock("@/lib/interface-mode", () => ({ useAdvancedMode: () => fixture.advanced, setAdvancedMode: () => {} }));
 vi.mock("./CloudScreenPreview", () => ({
   CloudScreenPreview: ({ onOpen }: { onOpen: () => void }) => createElement("button", { "data-preview": "", onClick: onOpen }, "preview"),
 }));
@@ -69,7 +72,9 @@ vi.mock("@/state/store", async (importOriginal) => ({
     }
     if (route === "/api/bots/scout/local-computer/screenshot") return { image: "data:image/png;base64,FRAME" };
     if (route === "/api/bots/scout/computer") {
-      return { configured: true, ready: true, managed: true, imageMatches: true, container: "running", problem: null, box: { state: "ready" } };
+      fixture.statusReads++;
+      return { configured: true, ready: true, managed: true, imageMatches: true, container: "running", problem: null, box: { state: "ready" },
+        ...(fixture.sharedStatus ? { sharedDesktop: { mode: "shared", controller: "bot", activeBot: { id: "alpha", name: "Alpha" }, waitingQueue: [{ id: "beta", name: "Beta" }] } } : {}) };
     }
     if (route === "/api/bots/scout/computer/screenshot") return { png: "FRAME", format: "png" };
     if (route === "/api/bots/scout/computer/join") return { joinUrl: "https://desktop.invalid/scout" };
@@ -97,15 +102,22 @@ const makeBot = (patch: Partial<Bot> = {}): Bot => ({
 let root: Root | null = null;
 let state: AppState;
 let shown: Bot;
+let flushMode: (() => Promise<Bot | null>) | null = null;
+const flushBotPatches = async () => flushMode ? flushMode() : null;
 const draw = () => flushSync(() => root!.render(createElement(BotEditorStore, {
   value: {
     state,
     dispatch: (action: Action) => {
+      if (action.type === "updateBot") {
+        shown = { ...shown, ...action.patch } as Bot;
+        queueMicrotask(draw);
+        return;
+      }
       if (action.type !== "computerControl") return;
       state = { ...state, computerControl: { ...state.computerControl, [action.botId]: { held: action.held, helpReason: action.helpReason, help: action.help } } };
       queueMicrotask(draw);
     },
-    flushBotPatches: async () => null,
+    flushBotPatches,
     refreshInstances: async () => {},
     refreshModels: async () => {},
   },
@@ -148,6 +160,10 @@ beforeEach(() => {
   });
   fixture.held = false;
   fixture.owned = true;
+  fixture.sharedStatus = false;
+  fixture.advanced = false;
+  fixture.statusReads = 0;
+  flushMode = null;
   fixture.controls = [];
   fixture.posts = [];
   fixture.beacons = [];
@@ -271,6 +287,30 @@ describe("taking control of a Local VM", () => {
 });
 
 describe("taking control of other computers", () => {
+  it("waits for the saved VPS mode before checking the new desktop", async () => {
+    fixture.advanced = true;
+    await open(makeBot({ computer: "cloud", cloudBackend: "vps", busy: false }));
+    const reads = fixture.statusReads;
+    let finish!: (bot: Bot) => void;
+    flushMode = () => new Promise<Bot>(resolve => { finish = resolve; });
+    await press("Shared VPS Desktop");
+    expect(fixture.statusReads).toBe(reads);
+    expect(fixture.posts).not.toContain("/api/bots/scout/computer/provision");
+    expect(finish).toBeDefined();
+    finish(shown);
+    await settle();
+    expect(fixture.statusReads).toBe(reads + 1);
+  });
+
+  it("shows the shared desktop holder and queue while preserving Take Control", async () => {
+    fixture.sharedStatus = true;
+    await open(makeBot({ computer: "cloud", cloudBackend: "vps", vpsDesktopMode: "shared" }));
+    expect(document.body.textContent).toContain("Shared VPS Desktop");
+    expect(document.body.textContent).toContain("Alpha is using it");
+    expect(document.body.textContent).toContain("Waiting: Beta");
+    expect(button("Take control")).toBeDefined();
+  });
+
   it("a VPS is driven in place too, and handing back closes its viewer tunnel", async () => {
     await open(makeBot({ computer: "cloud", cloudBackend: "vps" }));
     await press("Take control");

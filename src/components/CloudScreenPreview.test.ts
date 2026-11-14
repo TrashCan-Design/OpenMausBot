@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { CloudScreenPreview } from "./CloudScreenPreview";
+import { CloudScreenPreview, cloudPreviewStatusLabel } from "./CloudScreenPreview";
 
 const defaults = {
   src: null,
@@ -36,6 +36,11 @@ describe("cloud screen connection feedback", () => {
     const html = renderToStaticMarkup(createElement(CloudScreenPreview, { ...defaults, starting: true }));
     expect(html).toContain("Starting your bot&#x27;s desktop…");
     expect(html).not.toContain("Connecting to the screen…");
+  });
+
+  it("keeps a visible frame labeled stale while a refresh is in flight", () => {
+    expect(cloudPreviewStatusLabel({ visible: true, refreshing: true, starting: false })).toBe("Showing the last screen while it refreshes.");
+    expect(cloudPreviewStatusLabel({ visible: false, refreshing: true, starting: false })).toBe("Connecting to the screen…");
   });
 
   it("surfaces request failures with a retry action instead of a permanent loader", () => {

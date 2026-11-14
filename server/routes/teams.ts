@@ -30,6 +30,7 @@ import type { RoutineManager } from "../routines.ts";
 import { readSectionContext } from "../section-context.ts";
 import { sectionKey, type BotRecord, type GroupRecord, type Store } from "../store.ts";
 import { createTeamBackup, importTeamBackup } from "../team-backup.ts";
+import { importIdempotencyKey, importStillPresent, recallImport, rememberImport } from "../import-replay.ts";
 import { fetchGithubTeam, fetchGrokTemplateCard, fetchLibraryTeam, fetchTeamCatalog } from "../team-library.ts";
 import { createTeamManifest, parseTeamManifest } from "../team-manifest.ts";
 import { CursorFallback, defaultCursorSession, type CursorSession } from "../cursor-session.ts";
@@ -330,6 +331,16 @@ export function createTeamRoutes(deps: TeamRouteDeps): RouteHandler {
       return outcome.ok ? json(res, 201, { skill: outcome.value }) : json(res, outcome.status, { error: outcome.error, code: outcome.code });
     }
     if (method === "POST" && path === "/api/teams/import") {
+      const importKey = importIdempotencyKey(req.headers["idempotency-key"]);
+      if (importKey === "") return json(res, 400, { error: "Idempotency-Key must be a UUID" });
+      if (importKey) {
+        const prior = recallImport(importKey);
+        if (prior && importStillPresent(prior.body, (id) => Boolean(store.bot(id)))) return json(res, prior.status, prior.body);
+      }
+      const keep = (status: number, body: unknown) => {
+        if (importKey) rememberImport(importKey, status, body);
+        return json(res, status, body);
+      };
       // Additive-only: a manifest is untrusted, so every member becomes a NEW bot and none can name an existing bot or room.
       const importMode = url.searchParams.get("mode") ?? "add";
       if (importMode === "replace") {
@@ -373,7 +384,7 @@ export function createTeamRoutes(deps: TeamRouteDeps): RouteHandler {
           const groups = imported.groups.map((group) => groupWithThread(group));
           for (const bot of bots) broadcast({ kind: "bot", bot });
           for (const group of groups) broadcast({ kind: "group", group });
-          return json(res, 201, { ...imported, bots, groups });
+          return keep(201, { ...imported, bots, groups });
         } catch (error) {
           return json(res, 400, { error: error instanceof Error ? error.message : "Backup could not be imported" });
         }
@@ -399,13 +410,13 @@ export function createTeamRoutes(deps: TeamRouteDeps): RouteHandler {
         const result = packageDocument
           ? importPackageDocument(packageDocument, { ...options, trust: "file" }, deps)
           : importTeamManifest(manifest!, options, deps);
-        if (result.alreadyAdded) return json(res, 200, result);
+        if (result.alreadyAdded) return keep(200, result);
         imported = result;
       } catch (error) {
         if (error instanceof PackageImportError) return json(res, error.status, { error: error.message, code: error.code });
         throw error;
       }
-      return json(res, 201, {
+      return keep(201, {
         name: imported.name,
         section: imported.section,
         bots: imported.bots.map((bot) => publicBot(store.bot(bot.id) ?? bot)),

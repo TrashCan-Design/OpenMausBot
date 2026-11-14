@@ -143,14 +143,17 @@ export function shouldPollCloudPreview(
 export function persistedComputerSelectionMatches({
   computer,
   cloudBackend,
+  vpsDesktopMode,
   persistedBot,
 }: {
   computer: Bot["computer"];
   cloudBackend: NonNullable<Bot["cloudBackend"]>;
-  persistedBot: Pick<Bot, "computer" | "cloudBackend">;
+  vpsDesktopMode?: Bot["vpsDesktopMode"];
+  persistedBot: Pick<Bot, "computer" | "cloudBackend" | "vpsDesktopMode">;
 }): boolean {
   return persistedBot.computer === computer
-    && (persistedBot.cloudBackend ?? "box") === cloudBackend;
+    && (persistedBot.cloudBackend ?? "box") === cloudBackend
+    && (persistedBot.vpsDesktopMode ?? "per-bot") === (vpsDesktopMode ?? "per-bot");
 }
 
 export function autoSelectsLocalComputer({

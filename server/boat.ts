@@ -4,9 +4,10 @@
 // state change and the dedicated IP across archive/resume, so never persist either.
 import { createHash } from "node:crypto";
 
+import { boatAccount, boatConfigured, describeBoatAccount, usesIncludedBoat } from "./boat-account.ts";
 import { DATA_DIR, type AppConfig } from "./config.ts";
 import { loadEnvironmentId } from "./environment.ts";
-import { boatProviderApi, type ServiceCredential } from "./included-services.ts";
+import { boatProviderApi } from "./included-services.ts";
 import { relayBody, relayPath } from "./boat-relay.ts";
 import {
   blockedUntilBoatFinishes,
@@ -138,7 +139,8 @@ function snapshotBoatConfig(cfg: AppConfig): AppConfig {
 /** An own token goes to Boat; Cloud Pro's included token only to its relay. */
 function boatFetch(cfg: AppConfig, path: string, opts: RequestInit = {}) {
   const account = boatAccount(cfg);
-  return fetch(`${account?.api ?? boatProviderApi()}${relayPath(account, path)}`, {
+  if (!account?.token) return Promise.reject(Object.assign(new Error("Boat is unavailable in OpenBot"), { status: 410 }));
+  return fetch(`${account.api ?? boatProviderApi()}${relayPath(account, path)}`, {
     ...opts,
     headers: {
       authorization: `Bearer ${account?.token}`,
@@ -883,26 +885,7 @@ export async function readyBoat(cfg: AppConfig, botId: string, budgetMs = 60_000
   return waitReady(cfg, boat.id, budgetMs);
 }
 
-export function boatAccount(cfg: AppConfig): ServiceCredential | null {
-  // The managed Boat provider is retired in OpenBot. Existing keys stay in
-  // saved configuration for recovery, but no request is made to Boat.
-  void cfg;
-  return null;
-}
-
-export function boatConfigured(cfg: AppConfig) {
-  return Boolean(boatAccount(cfg));
-}
-
-function usesIncludedBoat(cfg: AppConfig): boolean {
-  return boatAccount(cfg)?.included === true;
-}
-
-/** Configured-or-not for Settings, never the token. */
-export function describeBoatAccount(cfg: AppConfig): { configured: boolean; included?: true } {
-  const account = boatAccount(cfg);
-  return { configured: Boolean(account), ...(account?.included ? { included: true as const } : {}) };
-}
+export { boatAccount, boatConfigured, describeBoatAccount };
 
 export async function verifyToken(token: string): Promise<{ ok: true } | { ok: false; message: string; rejected?: true }> {
   try {

@@ -84,14 +84,25 @@ export function createMcpHealth(deps: McpHealthDeps) {
     if (about) deps.tell(offNotice(name, server.bot ? about : null), about);
   };
 
+  const generations = new Map<string, number>();
+  const checkId = (name: string, server: CommandServer, botId: string) => `${name}\u0000${standsFor(server, botId)}`;
   const check = (name: string, server: CommandServer, botId: string): Promise<void> => {
-    const id = `${name}\u0000${standsFor(server, botId)}`;
+    const id = checkId(name, server, botId);
     const pending = running.get(id);
     if (pending) return pending;
+    const generation = generations.get(id) ?? 0;
     const work = slot(() => deps.start(name, server, botId))
       .catch((error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) }))
-      .then((result) => record(name, server, botId, result))
-      .finally(() => running.delete(id));
+      .then((result) => {
+        if ((generations.get(id) ?? 0) !== generation) return;
+        record(name, server, botId, result);
+      })
+      .finally(() => {
+        if (running.get(id) === work) running.delete(id);
+        if ((generations.get(id) ?? 0) === generation) return;
+        const current = deps.servers()[name];
+        if (current) void check(name, current, botId);
+      });
     running.set(id, work);
     return work;
   };
@@ -100,6 +111,8 @@ export function createMcpHealth(deps: McpHealthDeps) {
     const server = deps.servers()[name];
     if (!server) return;
     for (const bot of deps.users(name)) {
+      const id = checkId(name, server, bot.id);
+      if (force) generations.set(id, (generations.get(id) ?? 0) + 1);
       if (force || due(checkOf(name, server, bot.id))) void check(name, server, bot.id);
       if (!server.bot) return;
     }

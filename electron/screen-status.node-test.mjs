@@ -75,7 +75,7 @@ test("the icon's menu says plainly what the Clouds can't use, why, and offers th
   indicator.update({ clouds: ["My Cloud"], screen: notRunning });
   const [line, why, fix] = trays[0].menu;
   assert.deepEqual([line.label, line.enabled, why.label, why.enabled, fix.label], ["My Cloud can use this PC, but not its apps and screen", false, "Screen control isn't running on this PC", false, "Start screen control"]);
-  assert.equal(trays[0].tip, "OpenMausBot: My Cloud can use this PC, but not its apps and screen. Screen control isn't running on this PC");
+  assert.equal(trays[0].tip, "OpenBot: My Cloud can use this PC, but not its apps and screen. Screen control isn't running on this PC");
   fix.click();
   assert.equal(started, 1, "one click starts screen control");
   indicator.update({ clouds: ["My Cloud"], screen: { ready: true, lent: true, reason: null, fix: null } });

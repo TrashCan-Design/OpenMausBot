@@ -128,7 +128,7 @@ const { desktopViewerUrl, sameDesktopViewerOrigin } = require("./desktop-viewer.
 const { createDesktopWorkspaceManager } = require("./desktop-workspace.cjs");
 const { createTrustedApprovalModeCoordinator } = require("./approval-trusted-mode.cjs");
 const { DESKTOP_MUTATION_HEADER, desktopServerHeaders } = require("./desktop-server-auth.cjs");
-const { MIN_BOUNDS, normalizeUnreadCount, resolveWindowState } = require("./window-state.cjs");
+const { MIN_BOUNDS, normalizeUnreadCount, resolveWindowState, unreadOverlayPng } = require("./window-state.cjs");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const previousUserData = openBotUserDataPath(app.getPath("userData"));
@@ -169,7 +169,11 @@ function applyUnreadBadge(win = mainWindow) {
   const count = normalizeUnreadCount(unreadCount);
   if (process.platform === "win32") {
     if (!win || win.isDestroyed()) return;
-    unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
+    if (!unreadOverlayIcon) {
+      unreadOverlayIcon = nativeImage.createEmpty();
+      unreadOverlayIcon.addRepresentation({ scaleFactor: 1, buffer: unreadOverlayPng(16) });
+      unreadOverlayIcon.addRepresentation({ scaleFactor: 2, buffer: unreadOverlayPng(32) });
+    }
     win.setOverlayIcon(
       count > 0 && !unreadOverlayIcon.isEmpty() ? unreadOverlayIcon : null,
       count > 0 ? `${count} unread conversation${count === 1 ? "" : "s"}` : "No unread conversations",

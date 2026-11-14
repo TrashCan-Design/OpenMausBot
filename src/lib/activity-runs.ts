@@ -42,8 +42,14 @@ function foldable(message: Message): boolean {
 
 type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;
 
+const keptVisible = (message: Message) => Boolean(
+  message.attachments?.length || message.publishedPage || message.png || message.card || message.signIn || message.secret
+  || message.connector || message.widget || message.app || message.helperIntro || message.helperFollowup
+  || message.setupSuggestion || message.setupOffer || message.setupRequest,
+);
+
 const isNarration = (message: Message, turnId: string) =>
-  message.role === "bot" && message.kind === "text" && message.turnId === turnId && !message.turnTerminal;
+  message.role === "bot" && message.kind === "text" && message.turnId === turnId && !message.turnTerminal && !keptVisible(message);
 
 /** A turn starts with the person's last message before its first row, or with that row when nobody wrote first. */
 function turnStartedAt(messages: readonly Message[], firstIndex: number, fallback: number): number {
@@ -54,6 +60,44 @@ function turnStartedAt(messages: readonly Message[], firstIndex: number, fallbac
 /** "Worked for 29s", or plain "Worked" for a turn under a second. */
 export function workedLabel(elapsed: number): string {
   return elapsed >= 1_000 ? t("chat.run.workedFor", { elapsed: formatElapsed(elapsed) }) : t("chat.run.worked");
+}
+
+function thoughtLabel(elapsed: number, live: boolean): string {
+  if (live) return t("chat.thinking");
+  return elapsed >= 1_000 ? t("chat.thoughtFor", { elapsed: formatElapsed(elapsed) }) : t("chat.thought");
+}
+
+function answerTails(messages: readonly Message[]): Map<string, Set<string>> {
+  const pending = new Map<string, Message[]>();
+  const terminal = new Map<string, string[]>();
+  for (const message of messages) {
+    const turnId = message.turnId;
+    if (!turnId) continue;
+    if (message.role === "bot" && message.kind === "text") {
+      const list = pending.get(turnId);
+      if (list) list.push(message);
+      else pending.set(turnId, [message]);
+      if (message.turnTerminal) {
+        const ids = terminal.get(turnId);
+        if (ids) ids.push(message.id);
+        else terminal.set(turnId, [message.id]);
+      }
+      continue;
+    }
+    if (message.kind === "activity" && message.tool && !isStatusActivity(message)) pending.set(turnId, []);
+  }
+  const tails = new Map<string, Set<string>>();
+  for (const [turnId, list] of pending) {
+    const tail = new Set(list.map((message) => message.id));
+    for (const id of terminal.get(turnId) ?? []) tail.add(id);
+    tails.set(turnId, tail);
+  }
+  return tails;
+}
+
+function progressRow(message: Message, turnId: string, tail: Set<string>): boolean {
+  if (message.turnId !== turnId || tail.has(message.id)) return false;
+  return isNarration(message, turnId) || foldable(message);
 }
 
 /** How long each finished turn took, keyed by its answer's id: from its start to the answer. */
@@ -70,7 +114,7 @@ export function turnDurations(messages: readonly Message[]): Map<string, number>
 }
 
 /** Once a turn has its answer, the rows `folded` picks go behind one "Worked for 29s" chip at the first of them. */
-function settledTurnFolds(messages: Message[], folded: (message: Message, turnId: string) => boolean): {
+function settledTurnFolds(messages: Message[], folded: (message: Message, turnId: string) => boolean, labelFor: (elapsed: number) => string = workedLabel): {
   byAnchorId: Map<string, TurnFold>;
   hiddenIds: Set<string>;
 } {
@@ -91,7 +135,7 @@ function settledTurnFolds(messages: Message[], folded: (message: Message, turnId
 
     const firstIndex = before.findIndex((message) => message.turnId === turnId);
     const startedAt = turnStartedAt(messages, firstIndex, rows[0].at);
-    const label = workedLabel(Math.max(0, terminal.at - startedAt));
+    const label = labelFor(Math.max(0, terminal.at - startedAt));
     byAnchorId.set(rows[0].id, { kind: "turn", id: `turn:${turnId}`, turnId, label, messages: rows });
     for (const message of rows) hiddenIds.add(message.id);
   });
@@ -104,9 +148,40 @@ function assistantTurnFolds(messages: Message[]) {
   return settledTurnFolds(messages, isNarration);
 }
 
-/** A conversation keeps the bot's own progress lines and folds only its finished tool steps. */
-function toolStepFolds(messages: Message[]) {
-  return settledTurnFolds(messages, (message, turnId) => message.turnId === turnId && foldable(message));
+function openTurnFolds(messages: Message[], live: boolean, tails: Map<string, Set<string>>): { byAnchorId: Map<string, TurnFold>; hiddenIds: Set<string> } {
+  const byAnchorId = new Map<string, TurnFold>();
+  const hiddenIds = new Set<string>();
+  const seen = new Set<string>();
+  let lastTurnId: string | undefined;
+  for (const message of messages) if (message.turnId) lastTurnId = message.turnId;
+  for (const message of messages) {
+    const turnId = message.turnId;
+    if (!turnId || seen.has(turnId)) continue;
+    seen.add(turnId);
+    if (messages.some((row) => row.turnId === turnId && row.role === "bot" && row.kind === "text" && row.turnTerminal)) continue;
+    const closed = messages.some((row) => row.turnId === turnId && isStatusActivity(row));
+    const working = live && turnId === lastTurnId && !closed;
+    const rows = messages.filter((row) => progressRow(row, turnId, working ? new Set() : tails.get(turnId) ?? new Set()));
+    if (!rows.length) continue;
+    byAnchorId.set(rows[0]!.id, { kind: "turn", id: `turn:${turnId}`, turnId, label: thoughtLabel(0, working), messages: rows });
+    for (const row of rows) hiddenIds.add(row.id);
+  }
+  return { byAnchorId, hiddenIds };
+}
+
+/** A direct conversation folds narration and finished tool steps. The answer, including several final segments, stays out. */
+function conversationFolds(messages: Message[], live: boolean): { byAnchorId: Map<string, TurnFold>; hiddenIds: Set<string> } {
+  const tails = answerTails(messages);
+  const settled = settledTurnFolds(
+    messages,
+    (message, turnId) => progressRow(message, turnId, tails.get(turnId) ?? new Set()),
+    (elapsed) => thoughtLabel(elapsed, false),
+  );
+  const open = openTurnFolds(messages, live, tails);
+  return {
+    byAnchorId: new Map([...open.byAnchorId, ...settled.byAnchorId]),
+    hiddenIds: new Set([...open.hiddenIds, ...settled.hiddenIds]),
+  };
 }
 
 export function roomTurnFolds(messages: Message[]): {
@@ -126,10 +201,10 @@ export function roomTurnFolds(messages: Message[]): {
   return { byTerminalId, hiddenIds };
 }
 
-function group(messages: Message[], foldAssistantTurns: boolean): TranscriptItem[] {
+function group(messages: Message[], foldAssistantTurns: boolean, live = true): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const folds = foldAssistantTurns
-    ? toolStepFolds(messages)
+    ? conversationFolds(messages, live)
     : { byAnchorId: new Map<string, TurnFold>(), hiddenIds: new Set<string>() };
   let run: Message[] = [];
   const flush = () => {
@@ -169,8 +244,8 @@ export function groupActivityRuns(messages: Message[]): ActivityTranscriptItem[]
   return group(messages, false) as ActivityTranscriptItem[];
 }
 
-export function groupTranscript(messages: Message[]): TranscriptItem[] {
-  return group(messages, true);
+export function groupTranscript(messages: Message[], live = true): TranscriptItem[] {
+  return group(messages, true, live);
 }
 
 const MAX_NAMES = 3;

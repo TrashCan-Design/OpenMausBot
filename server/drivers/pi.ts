@@ -53,14 +53,12 @@ export { decodePiFrame, PiRpcChunks, piLineReader } from "./pi-rpc.ts";
 const DRIVER_KIND = "piAgent";
 const PI_ARGS = ["--mode", "rpc", "--no-session"];
 const PI_MODEL_UPDATE_ARGS = ["update", "--models", "--no-approve"];
-/** omp's RPC transport caps a frame at 1 MiB and chunks bigger ones only after the client
- *  negotiates protocol 2. Vanilla pi has no handshake frame to wait for. */
+/** omp's RPC transport caps a frame at 1 MiB and chunks bigger ones only after the client negotiates protocol 2. Vanilla pi has no handshake frame to wait for. */
 const PI_NEGOTIATE_FRAME = { id: "negotiate", type: "negotiate_protocol", protocolVersion: 2 };
 const PI_PROMPT_RE_ANCHOR_TURNS = 8;
 /** How long to wait after a finished turn_end for agent_end, which some runtimes never send. */
 const PI_AGENT_END_GRACE_MS = 60_000;
-/** A prompt sent before pi answers new_session or switch_session runs on a session pi then replaces, so the turn waits
- *  for that answer however long it takes, and says so in the chat after this long. */
+/** A prompt sent before pi answers new_session or switch_session runs on a session pi then replaces, so the turn waits for that answer however long it takes, and says so in the chat after this long. */
 const PI_SESSION_SLOW_MS = 20_000;
 const PI_SESSION_SLOW = "Pi is taking longer than usual to start this conversation's session. The turn goes on when Pi answers. Press Stop to cancel it.";
 
@@ -600,7 +598,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           settle(false, "failed", endUsage);
           return;
         }
-        settle(true, sr === "cancelled" || sr === "aborted" ? "cancelled" : "end_turn", endUsage);
+        settle(sr !== "length", sr === "cancelled" || sr === "aborted" ? "cancelled" : sr === "length" ? "max_tokens" : "end_turn", endUsage);
       };
 
       const stop = () => {
@@ -841,7 +839,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         sessionReady = true;
         sessionOpened = true;
       } catch {
-        // pi --no-session accepts a prompt without an explicit session.
+        if (sessionPath && !settled) { emit({ ...base(threadId, turnId), type: "runtime.error", message: "Pi could not reopen the saved session, so this turn was stopped." }); await settle(false); return { turnId }; }
       }
       if (settled) return { turnId };
 

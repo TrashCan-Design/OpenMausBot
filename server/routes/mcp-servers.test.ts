@@ -23,7 +23,7 @@ afterEach(async () => {
   if (active) await new Promise<void>((resolve, reject) => active.close((error) => error ? reject(error) : resolve()));
 });
 
-async function serve(options: { botsPath?: () => BrokerPath | null } = {}) {
+async function serve(options: { botsPath?: () => BrokerPath | null; restart?: (name: string) => { ok: true } | { ok: false; status: number; error: string }; forgetRestart?: (name: string) => void } = {}) {
   const cfg: Pick<AppConfig, "mcpServers"> = { mcpServers: {} };
   const changes: string[] = [];
   let busy = false;
@@ -41,6 +41,8 @@ async function serve(options: { botsPath?: () => BrokerPath | null } = {}) {
     savedCustomDomain: () => null,
     connectionsChanged: (change) => { changes.push(change); },
     ...(options.botsPath ? { botsPath: options.botsPath } : {}),
+    ...(options.restart ? { restart: options.restart } : {}),
+    ...(options.forgetRestart ? { forgetRestart: options.forgetRestart } : {}),
   });
   const active = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -55,7 +57,10 @@ async function serve(options: { botsPath?: () => BrokerPath | null } = {}) {
   const post = (path: string, body: unknown) => fetch(`${base}${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  return { cfg, post, changes, get: () => fetch(`${base}/api/mcp/servers`), remove: (name: string) => fetch(`${base}/api/mcp/servers/${name}`, { method: "DELETE" }) };
+  const patch = (name: string, body: unknown) => fetch(`${base}/api/mcp/servers/${name}`, {
+    method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  return { cfg, post, patch, changes, get: () => fetch(`${base}/api/mcp/servers`), remove: (name: string) => fetch(`${base}/api/mcp/servers/${name}`, { method: "DELETE" }) };
 }
 
 it("says when a server is added, imported or removed on purpose, so a Cloud home's routines can wait while none is left", async () => {
@@ -67,6 +72,37 @@ it("says when a server is added, imported or removed on purpose, so a Cloud home
   expect((await remove("warehouse")).status).toBe(200);
   expect((await remove("missing")).status).toBe(404);
   expect(changes).toEqual(["added", "added", "removed"]);
+});
+
+it("adds a command server sent with type stdio, as other MCP clients write it, and keeps the old shape working", async () => {
+  const { cfg, post } = await serve();
+  const typed = await post("/api/mcp/servers", { name: "notes", type: "stdio", command: "npx", args: ["-y", "notes-mcp"] });
+  expect(typed.status, await typed.clone().text()).toBe(201);
+  const plain = await post("/api/mcp/servers", { name: "files", command: "npx", args: ["-y", "files-mcp"] });
+  expect(plain.status, await plain.clone().text()).toBe(201);
+  expect(cfg.mcpServers).toEqual({
+    notes: { command: "npx", args: ["-y", "notes-mcp"], env: {}, enabled: false },
+    files: { command: "npx", args: ["-y", "files-mcp"], env: {}, enabled: false },
+  });
+});
+
+it("restarts a command server without rewriting its saved keys, and forgets the restart when it is removed", async () => {
+  const seen: string[] = [];
+  const { cfg, post, patch, remove } = await serve({
+    restart: (name) => { seen.push(name); return { ok: true }; },
+    forgetRestart: (name) => { seen.push(`forget:${name}`); },
+  });
+  const added = await post("/api/mcp/servers", { name: "notes", command: "npx", args: ["-y", "notes-mcp"], env: { TOKEN: "saved-secret" } });
+  expect(added.status).toBe(201);
+  const before = JSON.stringify(cfg.mcpServers);
+  const restarted = await patch("notes", { restart: true });
+  expect(restarted.status).toBe(200);
+  expect(JSON.stringify(cfg.mcpServers)).toBe(before);
+  expect(JSON.stringify(await restarted.json())).not.toContain("saved-secret");
+  expect(seen).toEqual(["notes"]);
+  expect((await patch("notes", { restart: false })).status).toBe(400);
+  expect((await remove("notes")).status).toBe(200);
+  expect(seen).toEqual(["notes", "forget:notes"]);
 });
 
 it.each([["private", "person"], ["public", "team"]])("lists the scope of %s in reads and mutation responses", async (name, scope) => {

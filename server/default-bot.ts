@@ -65,7 +65,7 @@ function remember(dataDir: string, person: string, botId: string): void {
   writeFileAtomic(join(dataDir, LEDGER), JSON.stringify({ v: 1, places: { ...places, [person]: botId } }), { mode: 0o600 });
 }
 
-/** A member who left: should they join again, they are given a OpenBot of their own again. */
+/** A member who left: should they join again, they are given an OpenBot of their own again. */
 export function forgetDefaultBot(dataDir: string, person: string): void {
   const places = ledger(dataDir);
   if (!person || !Object.hasOwn(places, person)) return;
@@ -74,11 +74,13 @@ export function forgetDefaultBot(dataDir: string, person: string): void {
 }
 
 /** A new install's own OpenBot from before it was marked: the place's oldest bot, still live, outside any department,
- * not installed from a package, and still named OpenBot or still in the colour a new install gave it. */
+ * not installed from a package, and still named OpenBot, the earlier name MausBot, or still in the colour a new install gave it. */
+const LEGACY_DEFAULT_BOT_NAME = "MausBot";
+
 export function seededOpenBot(bots: readonly BotRecord[]): BotRecord | undefined {
   const oldest = bots.reduce<BotRecord | undefined>((first, bot) => !first || bot.createdAt < first.createdAt ? bot : first, undefined);
   if (!oldest || oldest.hidden || oldest.movedTo || oldest.section?.trim() || oldest.installedPackage) return undefined;
-  return oldest.name === DEFAULT_BOT_NAME || oldest.color === STARTER_COLOR ? oldest : undefined;
+  return oldest.name === DEFAULT_BOT_NAME || oldest.name === LEGACY_DEFAULT_BOT_NAME || oldest.color === STARTER_COLOR ? oldest : undefined;
 }
 
 /** Puts the intro where its person sees it next: in its open conversation while nobody has written there, else at the

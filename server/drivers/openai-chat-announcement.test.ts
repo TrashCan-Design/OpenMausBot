@@ -37,6 +37,11 @@ describe("announcesAction", () => {
     "I'm in the VM and will launch XFCE Terminal first. Is that okay?",
     "Let me know if you want the full report.",
     "The terminal is open and the task is complete.",
+    "Searching Wikipedia for 'Alan Turing' returned the article; he was born in 1912.",
+    "Opening the page worked. The title is 'Alan Turing - Wikipedia'.",
+    "Reading the page, the population is 8.4 million.",
+    "Here is what I found:",
+    "I'll keep an eye on it. Done: the form was submitted and the confirmation number is 4821.",
     `I'm in the VM and will launch the terminal. ${"x".repeat(400)}`,
   ])("leaves final replies, questions and long replies alone: %s", text => {
     expect(announcesAction(text)).toBe(false);

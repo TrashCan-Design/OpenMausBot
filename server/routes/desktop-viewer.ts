@@ -33,11 +33,12 @@ export function desktopViewerUrl(target: string, threadId?: string): string {
   return `/desktop-viewer#${params}`;
 }
 
-interface Viewer { socket: Socket; close: () => void; owner?: string; botId?: string }
+interface Viewer { socket: Socket; closed?: Promise<void>; close: () => void; owner?: string; botId?: string; targetId?: string }
 
 export function createDesktopViewer(deps: {
   target: (id: string) => DesktopTarget | undefined;
   live: (auth: RequestAuth) => boolean;
+  authorize?: (id: string, auth: RequestAuth) => boolean;
   /** Binds a viewer to a control lease: answers only while `controlLeaseId` holds `botId`'s computer and the target is
    * that computer. Shared and pool targets are refused: a bot hold cannot reserve their desktop. */
   lease?: (id: string, botId: string, controlLeaseId: string, threadId?: string) => (() => boolean) | undefined;
@@ -57,6 +58,7 @@ export function createDesktopViewer(deps: {
     if (method !== "GET") return json(res, 405, { error: "method not allowed" });
     // Also enforced at this boundary: admin and same-origin only.
     if (!auth.scopes.includes("admin") || !isSameOrigin(req)) return json(res, 403, { error: "forbidden" });
+    if (deps.authorize && !deps.authorize(match[1], auth)) return json(res, 403, { error: "forbidden" });
     // A lease-bound viewer: both names or neither, holding before anything is inspected, rechecked on every liveness pass.
     const botId = url.searchParams.get("botId");
     const controlLeaseId = url.searchParams.get("controlLeaseId");
@@ -82,11 +84,12 @@ export function createDesktopViewer(deps: {
     if (pending && stopped) { pending.socket.destroy(); return; }
     let upgrade: Viewer | undefined;
     if (pending) {
-      const viewer: Viewer = { socket: pending.socket, close: () => pending.socket.destroy() };
+      const viewer: Viewer = { socket: pending.socket, close: () => pending.socket.destroy(), targetId: match[1] };
       if (auth.kind === "session") viewer.owner = auth.session.id;
       if (botId !== null) viewer.botId = botId;
       viewers.set(req, viewer);
-      pending.socket.once("close", () => viewers.delete(req));
+      viewer.closed = new Promise(resolve => pending.socket.once("close", resolve));
+      pending.socket.once("close", () => { void viewer.closed!.then(() => viewers.delete(req)); });
       upgrade = viewer;
     }
     let connection: DesktopConnection;
@@ -98,7 +101,8 @@ export function createDesktopViewer(deps: {
     }
     // Inspection may outlive a closed tab or the handshake deadline.
     if (res.destroyed || upgrade?.socket.destroyed) return;
-    const live = () => deps.live(auth) && deps.target(match[1])?.key === target.key && (connection.live?.() ?? true);
+    const live = () => deps.live(auth) && (deps.authorize?.(match[1], auth) ?? true) &&
+      deps.target(match[1])?.key === target.key && (connection.live?.() ?? true);
     if (!live()) return json(res, 401, { error: "Viewer access expired" });
     if (!holds()) return json(res, 409, { error: "Take control of this computer first" });
     if (!Number.isInteger(connection.port) || connection.port < 1 || connection.port > 65535) {
@@ -150,6 +154,7 @@ export function createDesktopViewer(deps: {
       }
       clearTimeout(timeout);
       peer = remote;
+      upgrade.closed = Promise.all([upgrade.closed, new Promise<void>(resolve => remote.once("close", resolve))]).then(() => {});
       remote.once("error", upgrade.close);
       remote.once("close", upgrade.close);
       pending.release();
@@ -182,6 +187,21 @@ export function createDesktopViewer(deps: {
         closed++;
       }
       return closed;
+    },
+    drainForTarget: async (id: string): Promise<void> => {
+      const pending = [...viewers.values()].filter(viewer => viewer.targetId === id);
+      await Promise.all(pending.map(async viewer => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          viewer.close();
+          await Promise.race([viewer.closed, new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Viewer disconnect was not confirmed")), 5_000);
+          })]);
+        } finally { clearTimeout(timer); }
+      }));
+    },
+    closeForTarget: (id: string) => {
+      for (const viewer of viewers.values()) if (viewer.targetId === id) viewer.close();
     },
     closeAll: () => {
       stopped = true;

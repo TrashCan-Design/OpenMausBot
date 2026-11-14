@@ -8,7 +8,7 @@ HighLevel brand. Composio is not involved; the server (`server/highlevel/*`) tal
 ## How it works
 
 ```
-OMB server (desktop or Cloud home)         accounts.openmausbot.com (relay)              HighLevel
+OMB server (desktop or Cloud home)         accounts.openbot.com (relay)              HighLevel
   POST /api/highlevel/sign-in ───────────▶ POST /v1/highlevel/start → state + auth URL
   app opens the auth URL in the browser ─────────────────────────────────────────────▶ sign in, pick a location
                                             ◀── GET /v1/highlevel/callback?code&state ── redirect
@@ -45,7 +45,7 @@ OMB server (desktop or Cloud home)         accounts.openmausbot.com (relay)     
 ### "Please reach out to the agency admin for assistance with installation"
 
 HighLevel's Marketplace install page shows this when the agency that owns the sub-account (often a white-label agency,
-e.g. Growably) does not let sub-account users install apps. It comes from HighLevel, not OpenMausBot, and Connect
+e.g. Growably) does not let sub-account users install apps. It comes from HighLevel, not OpenBot, and Connect
 cannot get past it. Either ask the agency admin to install the app for that sub-account (or to allow sub-account
 installs), or use **Use a Private Integration token instead** on the card: a sub-account admin can create one under Settings →
 Private Integrations when the agency allows it.
@@ -70,7 +70,7 @@ listed.
 
 | Variable | Meaning |
 |---|---|
-| `OMB_HIGHLEVEL_RELAY_URL` | The relay. Default `https://accounts.openmausbot.com`. `off` disables the integration (`state: "unavailable"`); a Private Integration token still works. Loopback `http://` is accepted for tests. |
+| `OMB_HIGHLEVEL_RELAY_URL` | The relay. Default `https://accounts.openbot.com`. `off` disables the integration (`state: "unavailable"`); a Private Integration token still works. Loopback `http://` is accepted for tests. |
 | `OMB_HIGHLEVEL_API_URL` | Tests only: a fake HighLevel in place of `https://services.leadconnectorhq.com`. |
 
 ## Tools (bots)

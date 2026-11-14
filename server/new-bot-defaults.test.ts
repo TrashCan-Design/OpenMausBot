@@ -21,6 +21,12 @@ describe("new-bot templates", () => {
     }
   });
 
+  it("gives a new VPS bot the shared desktop unless the request already chose one", () => {
+    expect(resolveBotCreationDefaults(undefined, { settings: { cloudBackend: "vps", computer: "cloud" } }).profile.vpsDesktopMode).toBe("shared");
+    expect(resolveBotCreationDefaults(undefined, { settings: { cloudBackend: "vps", computer: "cloud", vpsDesktopMode: "per-bot" } }).profile.vpsDesktopMode).toBe("per-bot");
+    expect(resolveBotCreationDefaults(undefined, { settings: { computer: "off" } }).profile.vpsDesktopMode).toBeUndefined();
+  });
+
   it("takes the helper-model switch in the request that creates a bot, as a boolean and nothing else", () => {
     expect(resolveBotCreationDefaults(undefined, { settings: { helperModel: false } }).profile).toEqual({ helperModel: false });
     // beside a tool selection, as the sidebar's Duplicate sends them

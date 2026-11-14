@@ -13,9 +13,13 @@ export interface AddedTemplate {
 
 /** Adds a previewed template alongside everything already here, and selects its first bot. The server keeps the rules:
  * new records only, skills off, routines paused. */
-export async function addTemplate(manifest: unknown, dispatch: (action: Action) => void): Promise<AddedTemplate> {
+export async function addTemplate(manifest: unknown, dispatch: (action: Action) => void, importId?: string): Promise<AddedTemplate> {
   // SAFETY: this endpoint is owned by the app and returns the imported records.
-  const response = (await api("/api/teams/import?mode=add", { method: "POST", body: JSON.stringify(manifest) })) as AddedTemplate;
+  const response = (await api("/api/teams/import?mode=add", {
+    method: "POST",
+    body: JSON.stringify(manifest),
+    ...(importId ? { headers: { "content-type": "application/json", "idempotency-key": importId } } : {}),
+  })) as AddedTemplate;
   for (const bot of response.bots) dispatch({ type: "botAdded", bot });
   for (const group of response.groups ?? []) dispatch({ type: "groupPatched", group });
   for (const routine of response.routines ?? []) dispatch({ type: "routinePatched", routine });

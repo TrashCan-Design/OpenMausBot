@@ -6,6 +6,7 @@ export interface TakeoverSnapshot {
   held: boolean;
   /** This view's lease holds the computer; absent from a plain take or release. */
   owned?: boolean;
+  queuePosition?: number | null;
 }
 
 /** Another device's hand-back and this view's next take can arrive out of order; only a release that lasts ends a session. */
@@ -16,7 +17,7 @@ const JOIN_TIMEOUT_MS = 200_000;
 /** `crypto.randomUUID` exists only in secure contexts, and a phone may reach the app over plain LAN http. */
 const newLeaseId = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
-type Request = (action: "take" | "release", controlLeaseId?: string) => Promise<TakeoverSnapshot>;
+type Request = (action: "take" | "release", controlLeaseId?: string, signal?: AbortSignal) => Promise<TakeoverSnapshot>;
 
 function releaseWhenClosed(tab: Window, release: () => void): void {
   const watch = window.setInterval(() => {
@@ -83,7 +84,7 @@ function post(path: string, body: unknown): void {
  * bot's computer calls wait. Leaving it in any way (Hand back, closing the panel or the page, another conversation)
  * gives the computer back, but only a hold this view took: another device's stays.
  */
-export function useComputerTakeover({ botId, session, held, request, viewerClose }: {
+export function useComputerTakeover({ botId, session, held, request, viewerClose, shared = false, check }: {
   botId: string;
   /** The bot, conversation and computer being watched; a new one ends a session started on the old. */
   session: string;
@@ -91,8 +92,14 @@ export function useComputerTakeover({ botId, session, held, request, viewerClose
   request: Request;
   /** A VPS keeps its viewer tunnel until told; the Local VM's viewer runs with the VM. */
   viewerClose: string | null;
+  shared?: boolean;
+  check?: (lease: string) => Promise<TakeoverSnapshot>;
 }) {
   const [here, setHere] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const [queuePosition, setQueuePosition] = useState<number | null>(null);
+  const revision = useRef(0);
+  const pending = useRef<AbortController | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [handingBack, setHandingBack] = useState(false);
   const lease = useRef<{ id: string; viewerClose: string | null } | null>(null);
@@ -102,9 +109,12 @@ export function useComputerTakeover({ botId, session, held, request, viewerClose
   const end = useCallback(() => {
     setHere(false);
     setExpanded(false);
+    setWaiting(false);
+    setQueuePosition(null);
   }, []);
 
   const leave = useCallback(() => {
+    revision.current++; pending.current?.abort(); pending.current = null;
     const mine = lease.current;
     lease.current = null;
     end();
@@ -114,26 +124,59 @@ export function useComputerTakeover({ botId, session, held, request, viewerClose
   }, [botId, end]);
 
   const take = useCallback(async (expand = false) => {
-    const id = newLeaseId();
-    const snap = await request("take", id);
-    if (!snap.held) throw new Error(`${productName()} could not confirm computer control`);
-    lease.current = snap.owned ? { id, viewerClose: closeRef.current } : null;
-    setHere(true);
-    setExpanded(expand);
-  }, [request]);
+    if (lease.current) leave();
+    const id = newLeaseId(), generation = revision.current;
+    const controller = new AbortController();
+    pending.current = controller;
+    lease.current = { id, viewerClose: closeRef.current };
+    setWaiting(true);
+    try {
+      const snap = await request("take", id, ...(shared ? [controller.signal] : []));
+      if (controller.signal.aborted || generation !== revision.current) {
+        post(`/api/bots/${botId}/computer/control`, { action: "release", controlLeaseId: id }); return;
+      }
+      if (!snap.held || (shared && !snap.owned)) throw new Error(`${productName()} could not confirm computer control`);
+      lease.current = snap.owned ? { id, viewerClose: closeRef.current } : null;
+      setHere(true); setExpanded(expand);
+    } catch (error) {
+      post(`/api/bots/${botId}/computer/control`, { action: "release", controlLeaseId: id });
+      if (generation === revision.current) { lease.current = null; throw error; }
+    } finally {
+      if (generation === revision.current) { pending.current = null; setWaiting(false); }
+    }
+  }, [request, shared, botId, leave]);
 
   const handBack = useCallback(async () => {
+    revision.current++; pending.current?.abort(); pending.current = null;
+    const id = lease.current?.id;
     const close = lease.current?.viewerClose ?? closeRef.current;
     lease.current = null;
     end();
     setHandingBack(true);
     try {
-      await request("release");
+      if (!shared || id) await request("release", ...(shared ? [id] : []));
     } finally {
       setHandingBack(false);
       if (close) post(close, {});
     }
-  }, [end, request]);
+  }, [end, request, shared]);
+
+  const checkRef = useRef(check); checkRef.current = check;
+  useEffect(() => {
+    if (!shared || (!here && !waiting)) return;
+    let stopped = false, busy = false;
+    const timer = window.setInterval(() => {
+      const mine = lease.current;
+      if (!mine || busy || !checkRef.current) return;
+      busy = true;
+      void checkRef.current(mine.id).then(snap => {
+        if (stopped || lease.current?.id !== mine.id) return;
+        setQueuePosition(snap.queuePosition ?? null);
+        if (here && !snap.owned) leave();
+      }).catch(() => { if (!stopped && here) leave(); }).finally(() => { busy = false; });
+    }, 2_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [shared, here, waiting, leave]);
 
   useEffect(() => leave, [session, leave]);
   useEffect(() => {
@@ -149,5 +192,5 @@ export function useComputerTakeover({ botId, session, held, request, viewerClose
     return () => clearTimeout(timer);
   }, [here, held, end]);
 
-  return { here, expanded, setExpanded, handingBack, take, handBack, leave };
+  return { here, waiting, queuePosition, expanded, setExpanded, handingBack, take, handBack, leave };
 }

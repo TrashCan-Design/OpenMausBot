@@ -5,8 +5,10 @@ import { createOpenAIChatRuntime } from "./openai-chat.ts";
 const DEFAULT_URL = "https://api.groq.com/openai/v1";
 // Production text models: https://console.groq.com/docs/models
 const DEFAULT_MODELS: ModelCatalog = {
-  default: "openai/gpt-oss-120b",
+  default: "llama-3.3-70b-versatile",
   options: [
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B Versatile", contextWindow: 131072 },
+    { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant", contextWindow: 131072 },
     { id: "openai/gpt-oss-120b", label: "GPT OSS 120B", contextWindow: 131072 },
     { id: "openai/gpt-oss-20b", label: "GPT OSS 20B", contextWindow: 131072 },
   ],
@@ -87,7 +89,7 @@ export const GroqDriver: ProviderDriver<GroqConfig> = {
     return createOpenAIChatRuntime({
       input, driverKind: "groq", apiKey, apiUrl: config.url,
       tools: config.tools, models: () => catalog, refreshModels, reasoning: true,
-      reasoningReplayField: "reasoning", computerUse: true, imageInput: () => false,
+      reasoningReplayField: "reasoning", computerUse: false, imageInput: () => false,
       requestBody: (model, messages, stream) => ({ model, messages, stream }),
       httpErrorLabel: "Groq",
       missingKeyError: "Save a Groq API key in Settings → API keys, or set GROQ_API_KEY.",

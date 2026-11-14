@@ -3,6 +3,12 @@ import { Loader2, Maximize2, Monitor } from "lucide-react";
 
 import { t } from "@/lib/i18n";
 
+export function cloudPreviewStatusLabel(state: { visible: boolean; refreshing: boolean; starting: boolean }): string {
+  if (state.visible && state.refreshing) return t("computer.preview.stale");
+  if (state.visible) return "";
+  return state.starting ? t("computer.phase.starting") : t("computer.preview.connectingScreen");
+}
+
 export function CloudScreenPreview({ src, name, error, starting, opening, disabled, refreshing = false, retry = 0, onOpen, onRetry }: {
   src: string | null;
   name: string;
@@ -51,13 +57,13 @@ export function CloudScreenPreview({ src, name, error, starting, opening, disabl
       {!visible && !problem && (
         <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-[12px] text-ink-secondary">
           <Loader2 size={18} className="animate-spin" />
-          {starting ? t("computer.phase.starting") : t("computer.preview.connectingScreen")}
+          {cloudPreviewStatusLabel({ visible: false, refreshing, starting })}
         </div>
       )}
       {visible && refreshing && !problem && (
         <div role="status" className="absolute bottom-2 left-2 flex items-center gap-1 rounded-md bg-black/70 px-2 py-1 text-[11px] text-white">
           <Loader2 size={12} className="animate-spin" />
-          {t("computer.preview.connectingScreen")}
+          {cloudPreviewStatusLabel({ visible: true, refreshing: true, starting: false })}
         </div>
       )}
       {problem && (

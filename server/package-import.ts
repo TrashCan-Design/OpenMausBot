@@ -295,7 +295,8 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
         },
         { seedMessages: false },
       );
-      importedBots.push(created);
+      const patched = store.patchBot(created.id, { vpsDesktopMode: "shared" }) ?? created;
+      importedBots.push(patched);
       botIds.set(member.key, created.id);
       const playbooks = (agent?.playbooks ?? []).flatMap((key) => {
         const playbook = playbookByKey.get(key);

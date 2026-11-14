@@ -2,7 +2,6 @@
 import { readFileSync, mkdirSync, existsSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { normalizeImageGenerationUrl, type ImageGenerationConfig } from "../shared/image-generation.ts";
 import { botAvatarUrlSchema } from "../shared/bot-avatar.ts";
@@ -727,10 +726,7 @@ function fallbackEnv(entry: InstanceConfigMap[string]): string[] {
   }
 }
 
-export function changedInstanceIds(before: Record<string, unknown>, after: Record<string, unknown>): string[] {
-  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
-    .filter((id) => !isDeepStrictEqual(before[id], after[id]));
-}
+export { changedInstanceIds } from "./changed-instance-ids.ts";
 
 export const DATA_DIR = process.env.OMB_DATA_DIR ?? (existsSync(join(homedir(), ".openbot")) || !existsSync(join(homedir(), ".openmausbot"))
   ? join(homedir(), ".openbot") : join(homedir(), ".openmausbot"));

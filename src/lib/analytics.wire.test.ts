@@ -103,6 +103,7 @@ it("sends events without any stored or current address, polls nothing, and sends
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   try {
     const analytics = await import("./analytics");
+    analytics.setAnalyticsEnabled(true);
     await analytics.initAnalytics();
     analytics.track("app_snapshot", { bots: 3 });
     await minutes(11);

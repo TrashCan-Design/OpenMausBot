@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const DATA_ROOT = mkdtempSync(join(tmpdir(), "omb-bot-attachment-"));
 process.env.OMB_DATA_DIR = join(DATA_ROOT, "data");
 const { attachForTurn, deliveredCopy, guestWorkspaceToHost, saveBotAttachment } = await import("./bot-attachment.ts");
-const { ATTACHMENTS_DIR } = await import("./attachments.ts");
+const { ATTACHMENTS_DIR, FILE_MAX_BYTES } = await import("./attachments.ts");
 
 const WORK = join(DATA_ROOT, "work");
 const VM_HOME = join(DATA_ROOT, "vm-home");
@@ -185,7 +185,7 @@ describe("saveBotAttachment for a file a turn saved outside its folders", () => 
     await expect(saveBotAttachment({ path: join(DESIGNS, "bundle.zip"), ...turn })).rejects.toMatchObject({ status: 415 });
     const big = join(DESIGNS, "big.mp4");
     writeFileSync(big, "x");
-    truncateSync(big, 25 * 1024 * 1024 + 1);
+    truncateSync(big, FILE_MAX_BYTES + 1);
     await expect(saveBotAttachment({ path: big, ...turn })).rejects.toMatchObject({ status: 413 });
     await expect(saveBotAttachment({ path: "nope.pdf", ...turn })).rejects.toMatchObject({ status: 404 });
     await expect(saveBotAttachment({ path: join(DESIGNS, "nope.pdf"), ...turn })).rejects.toMatchObject({ status: 404 });

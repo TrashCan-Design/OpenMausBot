@@ -94,23 +94,6 @@ describe("a key saved in Settings → API keys", () => {
     expectNoKeyIn(fixture.track.mock.calls);
   });
 
-  it("reports a Boat key boat.dev refused over the desktop bridge as rejected, from the Computer panel", async () => {
-    const setCredential = vi.fn().mockRejectedValue(new Error(`Error invoking remote method 'credential:set': KeyRejected: That doesn't look like a Boat API key: ${KEY.slice(0, 12)}`));
-    vi.stubGlobal("window", { ogb: { setCredential } });
-    await enterKey({ id: "box", via: "computer_panel" });
-    expect(setCredential).toHaveBeenCalledWith("boxToken", KEY);
-    expect(fixture.api).not.toHaveBeenCalled();
-    expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "boat", via: "computer_panel", result: "rejected" }]]);
-    expectNoKeyIn(fixture.track.mock.calls);
-  });
-
-  it("reports a Boat key the server checked as ok, without testing it again", async () => {
-    fixture.api.mockResolvedValueOnce({ box: { configured: true } });
-    await enterKey({ id: "box" });
-    expect(fixture.api).toHaveBeenCalledOnce();
-    expect(fixture.track.mock.calls).toEqual([["api_key_saved", { provider: "boat", via: "settings", result: "ok" }]]);
-  });
-
   it("saves an xAI key through the desktop's encrypted store, so Remove clears the stored copy too", async () => {
     const setCredential = vi.fn().mockResolvedValue({ xai: { configured: true } });
     vi.stubGlobal("window", { ogb: { setCredential } });

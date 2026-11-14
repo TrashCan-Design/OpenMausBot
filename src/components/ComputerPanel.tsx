@@ -19,6 +19,7 @@ import { listenLiveFrames } from "@/lib/live-events";
 import { CloudScreenPreview } from "./CloudScreenPreview";
 import { isActiveTurnRefusal, isRemoteScreenshotContention } from "@/lib/remote-desktop";
 import { CloudBackendPicker } from "./CloudBackendPicker";
+import { SharedVpsModePicker, SharedVpsStatusLine } from "./SharedVpsDesktopControls";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutinesSection } from "./bot-settings/RoutinesSection";
 import { routineRunLabel, routineRunTone } from "@/lib/routine-display";
@@ -67,8 +68,14 @@ interface VpsComputerStatus {
   imageMatches: boolean;
   managed: boolean;
   container: "running" | "stopped" | "missing";
-  ready: boolean;
+  ready: boolean; memoryBytes?: number; memoryHostBytes?: number; memoryDeferred?: boolean;
   problem: string | null;
+  sharedDesktop?: {
+    mode: "shared" | "per-bot";
+    controller?: "bot" | "person" | null;
+    activeBot?: { id: string; name: string } | null;
+    waitingQueue?: Array<{ id: string; name: string }>;
+  };
 }
 
 type Phase =
@@ -119,7 +126,7 @@ const computerControlSnapshotSchema = z.object({
   held: z.boolean().optional().default(false),
   helpReason: z.string().nullable().optional().default(null),
   help: z.unknown().optional().transform(parseComputerHelp),
-  owned: z.boolean().optional(),
+  owned: z.boolean().optional(), queuePosition: z.number().int().positive().nullable().optional(),
 }).passthrough();
 
 export function ComputerPanel({
@@ -135,13 +142,15 @@ export function ComputerPanel({
   const liveTask = profileBot.tasks?.find((task) => task.threadId === profileBot.threadId);
   const livePlace = effectivePlace(profileBot, liveTask);
   const threadBot = currentTaskBot(profileBot);
-  const connectionKey = `${profileBot.id}:${profileBot.threadId}:${livePlace}:${profileBot.cloudBackend ?? "box"}:${threadBot.modelSelection.instanceId}`;
+  const connectionKey = `${profileBot.id}:${profileBot.threadId}:${livePlace}:${profileBot.cloudBackend ?? "box"}:${profileBot.vpsDesktopMode ?? "per-bot"}`;
+  const surfaceQueryKey = `${connectionKey}:${threadBot.modelSelection.instanceId}:${threadBot.modelSelection.model ?? ""}`;
   const [autoSurface, setAutoSurface] = useState<{ key: string; surface: Bot["computer"] } | null>(null);
   const autoSurfaceCurrent = autoSurface?.key === connectionKey;
   const surfaceReady = livePlace !== "auto" || autoSurfaceCurrent;
   const bot = { ...threadBot, computer: livePlace === "auto"
     ? autoSurfaceCurrent ? autoSurface.surface : undefined : livePlace };
-  const viewerConnectionKey = `${bot.id}:${bot.threadId}:${bot.computer}:${bot.cloudBackend ?? "box"}`;
+  const viewerConnectionKey = `${bot.id}:${bot.threadId}:${bot.computer}:${bot.cloudBackend ?? "box"}:${bot.vpsDesktopMode ?? "per-bot"}`;
+  const desktopEpoch = useRef("");
   const viewerConnection = useRef(viewerConnectionKey);
   viewerConnection.current = viewerConnectionKey;
   const desktopJoin = useRef<AbortController | null>(null);
@@ -165,6 +174,7 @@ export function ComputerPanel({
     botId: string;
     computer: Bot["computer"];
     cloudBackend: CloudBackend;
+    vpsDesktopMode: "per-bot" | "shared";
     section: string;
   } | null>(null);
   const [resolvedComputerSelection, setResolvedComputerSelection] = useState<{
@@ -182,6 +192,7 @@ export function ComputerPanel({
       && persistedComputerSelection.botId === bot.id
       && persistedComputerSelection.computer === profileBot.computer
       && persistedComputerSelection.cloudBackend === cloudBackend
+      && persistedComputerSelection.vpsDesktopMode === (profileBot.vpsDesktopMode ?? "per-bot")
       && persistedComputerSelection.section === (bot.section?.trim() ?? ""),
   );
   const computerStatusCurrent = Boolean(
@@ -208,6 +219,7 @@ export function ComputerPanel({
     cloudBackend?: CloudBackend;
     browser?: boolean;
     acknowledgeLocalAuto?: boolean;
+    vpsDesktopMode?: "per-bot" | "shared";
   }) => {
     // Clear in the same render as the optimistic profile change; the resolving effect waits for its PATCH.
     setResolvedComputerSelection(null);
@@ -223,6 +235,7 @@ export function ComputerPanel({
       if (persistedBot && !persistedComputerSelectionMatches({
         computer: profileBot.computer,
         cloudBackend,
+        vpsDesktopMode: profileBot.vpsDesktopMode,
         persistedBot,
       })) return;
       if (persistedBot && (persistedBot.section?.trim() ?? "") !== (bot.section?.trim() ?? "")) return;
@@ -230,13 +243,14 @@ export function ComputerPanel({
         botId: bot.id,
         computer: profileBot.computer,
         cloudBackend,
+        vpsDesktopMode: profileBot.vpsDesktopMode ?? "per-bot",
         section: bot.section?.trim() ?? "",
       });
     });
     return () => {
       alive = false;
     };
-  }, [bot.id, profileBot.computer, bot.section, cloudBackend, flushBotPatches]);
+  }, [bot.id, profileBot.computer, profileBot.vpsDesktopMode, bot.section, cloudBackend, flushBotPatches]);
   const [boatState, setBoatState] = useState<string | null>(null);
   const [polledFrame, setPolledFrame] = useState<{ png: string; mime: string } | null>(null);
   const [previewError, setPreviewError] = useState<Error | string | null>(null);
@@ -270,7 +284,6 @@ export function ComputerPanel({
   useEffect(() => {
     if (livePlace !== "auto" || !computerSelectionPersisted) return;
     const controller = new AbortController();
-    setAutoSurface(null);
     void api(threadPath("computer"), { signal: controller.signal }).then((status) => {
       if (controller.signal.aborted) return;
       const surface = status.surface;
@@ -283,7 +296,7 @@ export function ComputerPanel({
       setPhase("error");
     });
     return () => controller.abort();
-  }, [connectionKey, livePlace, computerSelectionPersisted, threadPath, retry]);
+  }, [surfaceQueryKey, connectionKey, livePlace, computerSelectionPersisted, threadPath, retry]);
   const vmResumable = phase === "vm-unavailable" && vmStatus?.resumable === true;
   const vmReadinessAttempts = useRef(0);
   const vmActionController = useRef<AbortController | null>(null);
@@ -306,7 +319,7 @@ export function ComputerPanel({
 
   const previousPanelTarget = useRef<string | null>(null);
   // Excludes the model and Auto's resolved surface: neither may move the tab.
-  const panelTargetKey = `${profileBot.id}:${profileBot.threadId}:${livePlace}:${profileBot.cloudBackend ?? "box"}`;
+  const panelTargetKey = `${profileBot.id}:${profileBot.threadId}:${livePlace}:${profileBot.cloudBackend ?? "box"}:${profileBot.vpsDesktopMode ?? "per-bot"}`;
   useEffect(() => {
     const previous = previousPanelTarget.current;
     if (previous === panelTargetKey && (explicitPanelView.current || !(bot.computer === "browser" && browserEnabled))) return;
@@ -382,16 +395,12 @@ export function ComputerPanel({
   useEffect(() => {
     if (panelView !== "computer") return;
     let alive = true;
-    setResolvedComputerSelection(null);
-    setTeamComputer(null);
-    setPhase("checking");
-    setPolledFrame(null);
-    setPreviewError(null);
-    setVmFrame(null);
-    setVmStatus(null);
-    setVpsStatus(null);
-    setLocalFrame(null);
-    setError(null);
+    const desktopKey = `${viewerConnectionKey}:${state.config?.vps?.sshAlias ?? ""}`;
+    if (desktopEpoch.current !== desktopKey) {
+      desktopEpoch.current = desktopKey;
+      setResolvedComputerSelection(null); setTeamComputer(null); setPhase("checking"); setPolledFrame(null); setPreviewError(null);
+      setVmFrame(null); setVmStatus(null); setVpsStatus(null); setLocalFrame(null); setError(null);
+    }
     // The selection may be optimistic: never let it choose a provider until the PATCH confirms server state.
     if (!computerSelectionPersisted || !surfaceReady) return;
     if (bot.computer === undefined) {
@@ -589,7 +598,7 @@ export function ComputerPanel({
     bot.threadId,
     bot.computer,
     bot.section,
-    bot.autoStartVps, bot.vpsAlias,
+    bot.autoStartVps, bot.vpsAlias, bot.vpsDesktopMode,
     cloudBackend,
     retry,
     capabilitiesReady,
@@ -633,10 +642,10 @@ export function ComputerPanel({
   }, [phase, threadPath, profileBot.busy, livePlace]);
 
   const control = state.computerControl[bot.id] ?? { held: false, helpReason: null };
-  const requestControl = useCallback(async (action: ComputerControlAction, controlLeaseId?: string) => {
+  const requestControl = useCallback(async (action: ComputerControlAction | "check", controlLeaseId?: string, signal?: AbortSignal) => {
     const snap = computerControlSnapshotSchema.parse(await api(`/api/bots/${bot.id}/computer/control`, {
       method: "POST",
-      body: JSON.stringify({ action, ...(controlLeaseId ? { controlLeaseId } : {}) }),
+      body: JSON.stringify({ action, ...(controlLeaseId ? { controlLeaseId } : {}) }), signal,
     }));
     dispatch({
       type: "computerControl",
@@ -651,7 +660,7 @@ export function ComputerPanel({
     : phase === "vm" && vmStatus?.viewer_url && vmStatus.target_key ? viewerTargetId({ key: vmStatus.target_key })
       : cloudPreviewReady && cloudBackend === "vps" ? `vps/${bot.id}` : null;
   const takeover = useComputerTakeover({
-    botId: bot.id, session: `${viewerConnectionKey}:${panelView}`, held: control.held, request: requestControl,
+    botId: bot.id, session: `${viewerConnectionKey}:${panelView}`, held: control.held, request: requestControl, shared: bot.vpsDesktopMode === "shared" && cloudBackend === "vps", check: id => requestControl("check", id),
     viewerClose: liveTarget?.startsWith("vps/") ? threadPath("computer/viewer-close") : null,
   });
   const liveHere = takeover.here && Boolean(liveTarget);
@@ -1139,7 +1148,7 @@ export function ComputerPanel({
     if (mode === "local" && approvalModeFor(profileBot) === "auto") {
       setLocalAutoWarningTarget(bot.id);
     }
-    else if (mode === "cloud") updateComputerSelection({ computer: mode, cloudBackend: "vps" });
+    else if (mode === "cloud") updateComputerSelection({ computer: mode, cloudBackend: "vps", ...(profileBot.cloudBackend === "vps" || profileBot.vpsDesktopMode ? {} : { vpsDesktopMode: "shared" as const }) });
     else if (mode === "browser") updateComputerSelection({ computer: mode, browser: true });
     else updateComputerSelection({ computer: mode });
   };
@@ -1308,6 +1317,7 @@ export function ComputerPanel({
             )}
             {computerStatusCurrent && bot.computer === "cloud" && cloudBackend === "vps" && (phase === "ready" || phase === "starting") && !liveHere && <span className="text-[11px]">{t("computer.badge.vps")}</span>}
         </div>
+        <SharedVpsStatusLine active={panelView === "computer" && cloudBackend === "vps" && bot.vpsDesktopMode === "shared" && computerStatusCurrent} ready={vpsStatus?.ready === true} botId={bot.id} desktop={vpsStatus?.sharedDesktop} memoryBytes={vpsStatus?.memoryBytes} memoryHostBytes={vpsStatus?.memoryHostBytes} memoryDeferred={vpsStatus?.memoryDeferred} refresh={() => api(threadPath("computer"), { background: true }) as Promise<VpsComputerStatus>} onStatus={setVpsStatus} control={{ owned: takeover.here, pending: takeover.waiting, position: takeover.queuePosition, take: () => void takeControl(), release: () => void handBack(), cancel: takeover.leave }} />
         <div className={cn("relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden rounded-xl bg-card", liveHere && "ring-2 ring-accent")}>
           {liveHere && liveTarget ? (
             <Suspense fallback={<Loader2 size={18} className="animate-spin text-ink-secondary" />}>
@@ -1709,11 +1719,14 @@ export function ComputerPanel({
             {placeActionButton(worksOnView, "mt-1 block font-medium text-accent hover:underline")}
           </div>
           {profileBot.computer === "cloud" && (
-            <CloudBackendPicker
-              compact
-              value={cloudBackend}
-              onChange={(backend) => updateComputerSelection({ cloudBackend: backend })}
-            />
+            <>
+              <CloudBackendPicker
+                compact
+                value={cloudBackend}
+                onChange={(backend) => updateComputerSelection({ cloudBackend: backend })}
+              />
+              {cloudBackend === "vps" && <SharedVpsModePicker mode={profileBot.vpsDesktopMode ?? "per-bot"} disabled={profileBot.busy || pending !== null} onChange={(mode) => updateComputerSelection({ vpsDesktopMode: mode })} />}
+            </>
           )}
         </div>
 

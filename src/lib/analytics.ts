@@ -72,6 +72,8 @@ function keepStoredOptOut() {
 export function initAnalytics(): Promise<void> {
   keepStoredOptOut();
   if (client || !analyticsEnabled()) return Promise.resolve();
+  // A later storage failure must not turn a page that already started sending into an opt-out.
+  choice ??= true;
   loading ??= import("posthog-js")
     .then(({ default: posthog }) => start(posthog))
     .catch(() => {

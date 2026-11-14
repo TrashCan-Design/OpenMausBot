@@ -10,6 +10,7 @@ export type BotUpdatePatch = Partial<
     | "notifications"
     | "cloudBackend"
     | "autoStartVps"
+    | "vpsDesktopMode"
     | "color"
     | "mascotExpression"
     | "mascotFaceColor"

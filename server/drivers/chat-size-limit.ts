@@ -3,9 +3,9 @@ import type { ChatContentPart } from "./chat-images.ts";
 import type { OpenAIChatMessage } from "./openai-chat.ts";
 import { object } from "./openai-chat-protocol.ts";
 
-/** nginx's "413 Request Entity Too Large" page, Express's "request entity too large", "Payload Too Large", and
- * OpenAI's "Request too large for <model>". */
-const TOO_LARGE = /\b(?:request entity|payload|request) too large\b/i;
+/** nginx's "413 Request Entity Too Large" page, Express's "request entity too large", "Payload Too Large",
+ * OpenAI/Groq's "Request too large for <model>", and context length/token limit error messages. */
+const TOO_LARGE = /\b(?:request entity|payload|request) too large\b|\b(?:context length|context window|prompt|string|tokens?) (?:is )?too (?:long|large)\b|\b(?:exceeds|exceeded) (?:the )?(?:maximum )?(?:allowed )?(?:context|token|model_context)\b|\bmaximum context length is \d+ tokens\b|\b(?:tokens? per min|tpm).*limit \d+.*requested \d+\b|\b(?:model_context_window_exceeded|context_window_exceeded|rate_limit_exceeded_context)\b/i;
 
 export function refusesRequestSize(status: number, body: string): boolean {
   return status === 413 || TOO_LARGE.test(body);
@@ -57,17 +57,18 @@ function shortenedToolOutput(message: OpenAIChatMessage): OpenAIChatMessage {
   return { ...message, content: typeof envelope?.result === "string" ? JSON.stringify({ ...envelope, result: shorten(envelope.result) }) : shorten(content) };
 }
 
-/** Aims at half of `refusedBytes`; null when nothing but the system prompt and `request` could shrink. */
+/** Aims at fraction of `refusedBytes` (default half); null when nothing but the system prompt and `request` could shrink. */
 export function smallerResend(
   messages: readonly OpenAIChatMessage[],
   request: OpenAIChatMessage,
   refusedBytes: number,
+  fraction = 2,
 ): { messages: OpenAIChatMessage[]; before: RequestSize; after: RequestSize } | null {
   const requestAt = messages.indexOf(request);
   if (requestAt < 0) throw new Error("the turn's request is not among the messages to resend");
   const before = requestSize(messages);
   const overhead = Math.max(0, refusedBytes - before.bytes);
-  const target = Math.floor(refusedBytes / 2) - overhead;
+  const target = Math.floor(refusedBytes / Math.max(2, fraction)) - overhead;
   const out: Array<OpenAIChatMessage | null> = [...messages];
   const sizes = out.map(bytesOf);
   let total = sizes.reduce((sum, size) => sum + size, 0);
@@ -83,6 +84,8 @@ export function smallerResend(
     ...shrinkable.filter((index) => index > requestAt && messages[index]!.role === "tool" && sizes[index]! > LONG_TOOL_OUTPUT_BYTES)
       .map((index) => () => replace(index, shortenedToolOutput(out[index]!))),
     ...shrinkable.filter((index) => index < requestAt).map((index) => () => replace(index, null)),
+    ...shrinkable.filter((index) => index > requestAt && messages[index]!.role === "tool" && sizes[index]! > SHORT_TOOL_OUTPUT_BYTES)
+      .map((index) => () => replace(index, shortenedToolOutput(out[index]!))),
   ];
   let taken = 0;
   for (; taken < steps.length && total > target; taken++) steps[taken]!();

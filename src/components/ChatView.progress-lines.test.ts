@@ -61,29 +61,32 @@ const rows = (container: HTMLElement) => [...transcript(container).querySelector
 afterEach(() => vi.unstubAllGlobals());
 
 describe("a finished turn in a conversation", () => {
-  it("keeps the bot's progress lines above its answer, with no chip when steps are hidden", () => {
+  it("folds progress into one Thought section even when tool names are hidden", () => {
     vi.stubGlobal("fetch", () => new Promise(() => {}));
     const { container, unmount } = mount(false);
     try {
+      expect(rows(container)).toEqual(["ask", "answer"]);
+      const chip = transcript(container).querySelector<HTMLButtonElement>("button.ui-pill")!;
+      expect(chip.textContent).toContain("Thought for 29s");
+      expect(chip.getAttribute("aria-expanded")).toBe("false");
+      expect(transcript(container).textContent).toContain("Fathom, Fireflies and Granola");
+      flushSync(() => chip.click());
+      expect(chip.getAttribute("aria-expanded")).toBe("true");
       expect(rows(container)).toEqual(["ask", "ack", "helper", "answer"]);
-      const text = transcript(container).textContent ?? "";
-      expect(text).toContain("I'll check current pricing since this changes often.");
-      expect(text).toContain("I'll spin up a research specialist");
-      expect(text.indexOf("I'll check current pricing")).toBeLessThan(text.indexOf("Fathom, Fireflies and Granola"));
-      expect(text).not.toContain("Worked for");
-      expect(transcript(container).querySelector("button.ui-pill")).toBeNull();
+      expect(transcript(container).textContent).toContain("I'll check current pricing since this changes often.");
+      expect(transcript(container).textContent).not.toContain("WebSearch");
     } finally { unmount(); }
   });
 
-  it("folds only its tool steps into one Worked-for chip when steps are shown", () => {
+  it("folds narration and tool steps into one Thought section when steps are shown", () => {
     vi.stubGlobal("fetch", () => new Promise(() => {}));
     const { container, unmount } = mount(true);
     try {
-      expect(rows(container)).toEqual(["ask", "ack", "helper", "answer"]);
+      expect(rows(container)).toEqual(["ask", "answer"]);
       const chips = [...transcript(container).querySelectorAll<HTMLButtonElement>("button.ui-pill")];
-      expect(chips.map((chip) => chip.textContent)).toEqual(["Worked for 29s"]);
+      expect(chips.map((chip) => chip.textContent)).toEqual(["Thought for 29s"]);
       flushSync(() => chips[0]!.click());
-      expect(rows(container)).toEqual(["ask", "ack", "search", "fetch", "fetch-2", "helper", "answer"]);
+      expect(rows(container)).toEqual(["ask", "ack", "search", "fetch", "helper", "fetch-2", "answer"]);
     } finally { unmount(); }
   });
 });

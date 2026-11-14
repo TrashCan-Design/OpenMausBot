@@ -22,6 +22,15 @@ describe("custom MCP registry", () => {
     });
   });
 
+  it("takes a command entry that names its stdio transport, and stores it as before", () => {
+    const plain = parseMcpServerMutation("notes", { command: "npx", args: ["-y", "notes-mcp"] });
+    expect(parseMcpServerMutation("notes", { type: "stdio", command: "npx", args: ["-y", "notes-mcp"] })).toEqual(plain);
+    expect(parseStoredMcpServer("notes", { type: "stdio", command: "npx" })).toEqual(parseStoredMcpServer("notes", { command: "npx" }));
+    expect(parseMcpServerMutation("notes", { type: "local", command: "npx" })).toMatchObject({ ok: false });
+    expect(parseMcpServerMutation("notes", { type: "stdio", url: "https://x.example/mcp" })).toMatchObject({ ok: false });
+    expect(parseMcpServerMutation("notes", { type: "http", command: "npx" })).toMatchObject({ ok: false });
+  });
+
   it("refuses unsafe and reserved routing names", () => {
     expect(mcpServerNameError("Bad.Name")).toMatch(/lowercase/);
     expect(mcpServerNameError("computer")).toMatch(/reserved/);
@@ -34,17 +43,17 @@ describe("custom MCP registry", () => {
     for (const key of ["OMB_HARNESS_URL", "OGB_BOX_TOKEN"]) {
       expect(parseStoredMcpServer("notes", { command: "notes-mcp", env: { [key]: "bad" } })).toEqual({
         ok: false,
-        error: `Environment variable “${key}” is reserved by OpenMausBot.`,
+        error: `Environment variable “${key}” is reserved by OpenBot.`,
       });
       expect(parseMcpServerMutation("notes", { command: "notes-mcp", env: { [key]: "bad" } })).toEqual({
         ok: false,
-        error: `Environment variable “${key}” is reserved by OpenMausBot.`,
+        error: `Environment variable “${key}” is reserved by OpenBot.`,
       });
     }
   });
 
   it("lets a custom server run an Electron binary as node, and nothing else", () => {
-    const refused = "Environment variable “ELECTRON_RUN_AS_NODE” is reserved by OpenMausBot; a custom server may set it to “1” only.";
+    const refused = "Environment variable “ELECTRON_RUN_AS_NODE” is reserved by OpenBot; a custom server may set it to “1” only.";
     expect(parseStoredMcpServer("notes", { command: "notes-mcp", env: { ELECTRON_RUN_AS_NODE: "0" } })).toEqual({ ok: false, error: refused });
     expect(parseMcpServerMutation("notes", { command: "notes-mcp", env: { ELECTRON_RUN_AS_NODE: "true" } })).toEqual({ ok: false, error: refused });
     const stored = parseStoredMcpServer("bundled", {

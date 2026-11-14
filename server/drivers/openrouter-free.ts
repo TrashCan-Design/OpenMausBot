@@ -7,8 +7,8 @@ import { httpStatusOf } from "./engine-errors.ts";
 
 /** Free models that call tools well, best first; when none is listed, the first free tool-capable model wins. */
 export const FREE_MODEL_PREFERENCE: readonly string[] = [
-  "nvidia/nemotron-3-super-120b-a12b:free",
   "google/gemma-4-31b-it:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
   "poolside/laguna-s-2.1:free",
   "nvidia/nemotron-3.5-lightning:free",
 ];

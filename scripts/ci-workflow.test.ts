@@ -144,11 +144,11 @@ describe("CI concurrency", () => {
     expect(gate).toContain('gh release view "v$current"');
     const validate = steps.find((step) => step.name === "Verify installer and update feed")!.run!;
     expect(validate).toContain("release/latest.yml");
-    expect(validate).toContain("entry.sha512");
+    expect(validate).toContain("node scripts/windows-release.mjs validate release");
     expect(steps.find((step) => step.name === "Verify packaged browser and server")!.run).toContain("smoke-packaged-server.mjs");
     const publish = steps.find((step) => step.name === "Publish updater-compatible GitHub Release")!.run!;
-    expect(publish).toContain('gh release create "v$VERSION"');
-    expect(publish).toContain('gh release edit "v$VERSION"');
+    expect(publish).toContain('sha256sum "OpenBot-$VERSION-setup.exe" > SHA256SUMS.txt');
+    expect(publish).toContain("node scripts/windows-release.mjs publish release");
   });
 
   it("builds the Windows Defender check's installer exactly as the release's Windows job does", () => {
@@ -230,9 +230,10 @@ describe("CI concurrency", () => {
       vitest_matrix: "${{ steps.scope.outputs.vitest_matrix }}",
       packaged_server_os: "${{ steps.scope.outputs.packaged_server_os }}",
     });
-    // Only these three static steps depend on the scope's build flag; the rest always run, or run only on Boat.
+    // Build and shared-desktop checks run for source changes.
     const built = (workflow.jobs.static.steps as { if?: string; run?: string }[]).filter((step) => step.if?.includes("outputs.build"));
     expect(built.map((step) => [step.if, step.run])).toEqual([
+      ["steps.scope.outputs.build == 'true'", "pnpm exec vitest run server/shared-vps-gateway.test.ts server/shared-vps-seat.test.ts server/shared-vps-host.test.ts server/shared-vps-proxy.test.ts server/mcp-schema-validator.test.ts server/drivers/acp/host.test.ts server/headless/connect.test.ts server/vps-routing.test.ts server/mcp-bridge.test.ts src/components/SharedVpsDesktopControls.test.ts src/components/computer-takeover.test.ts src/components/ComputerPanel.takeover.test.ts"],
       ["steps.scope.outputs.build == 'true'", "pnpm typecheck"],
       ["steps.scope.outputs.build == 'true'", "pnpm check:electron"],
       ["steps.scope.outputs.build == 'true'", "pnpm exec vite build"],

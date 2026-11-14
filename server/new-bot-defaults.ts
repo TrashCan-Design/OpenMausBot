@@ -29,6 +29,7 @@ export const botDefaultsProfileSchema = profilePatchSchema.extend({
   computer: z.enum(["cloud", "vm", "local", "browser", "off"]).nullable().optional(),
   cloudBackend: z.enum(["box", "vps"]).optional(),
   autoStartVps: z.boolean().optional(),
+  vpsDesktopMode: z.enum(["per-bot", "shared"]).optional(),
   cwd: z.string().max(4096).nullable().optional(),
   approvalMode: z.enum(["ask", "auto", "full", "custom"]).optional(),
   alwaysAllow: strings(200, 500).optional(),
@@ -131,5 +132,6 @@ export function resolveBotCreationDefaults(saved: NewBotDefaults | undefined, bo
   const resolved = botDefaultsProfileSchema.safeParse(profile);
   if (!resolved.success) throw Object.assign(new Error(settingsError(resolved.error)), { status: 400 });
   if (!resolved.data.name?.trim()) delete resolved.data.name;
+  if (resolved.data.cloudBackend === "vps" && resolved.data.vpsDesktopMode === undefined) resolved.data.vpsDesktopMode = "shared";
   return { ...template, profile: resolved.data };
 }

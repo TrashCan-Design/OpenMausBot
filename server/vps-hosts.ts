@@ -1,13 +1,14 @@
 // Which VPS host a bot's computer lives on: the app-wide SSH alias, or the bot's own.
 import { isValidSshAlias, vpsSshAlias, type AppConfig } from "./config.ts";
 
-/** A bot's own SSH alias wins over the default; both are validated the same way. */
-export function vpsSshAliasForBot(cfg: AppConfig, bot: { vpsAlias?: string } | null | undefined): string | null {
+/** Shared desktops use the app-wide VPS; per-bot desktops retain their own SSH alias override. */
+export function vpsSshAliasForBot(cfg: AppConfig, bot: { vpsAlias?: string; vpsDesktopMode?: "per-bot" | "shared" } | null | undefined): string | null {
+  if (bot?.vpsDesktopMode === "shared") return vpsSshAlias(cfg);
   return isValidSshAlias(bot?.vpsAlias) ? bot.vpsAlias : vpsSshAlias(cfg);
 }
 
 /** A config scoped to one bot's VPS alias, shaped for the vps-computer calls. */
-export function vpsConfigForBot(cfg: AppConfig, bot: { vpsAlias?: string } | null | undefined): AppConfig {
+export function vpsConfigForBot(cfg: AppConfig, bot: { vpsAlias?: string; vpsDesktopMode?: "per-bot" | "shared" } | null | undefined): AppConfig {
   const sshAlias = vpsSshAliasForBot(cfg, bot);
   return sshAlias ? { vps: { sshAlias } } : {};
 }

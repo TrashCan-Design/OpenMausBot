@@ -15,7 +15,11 @@ export interface TurnLive {
   /** The newest turn this thread showed has completed, failed or stopped. */
   ended: boolean;
   status: LiveStatus | null;
+  /** Provider-exposed reasoning for this turn. Omitted when the provider sent none. */
+  reasoning?: string;
 }
+
+const REASONING_CAP = 4_000;
 
 const UNKNOWN: TurnLive = { ended: false, status: null };
 const MAX_THREADS = 500;
@@ -30,7 +34,10 @@ function sameStatus(a: LiveStatus | null, b: LiveStatus | null): boolean {
 
 function put(threadId: string, next: TurnLive): void {
   const current = threads.get(threadId);
-  if (current && current.turnId === next.turnId && current.ended === next.ended && sameStatus(current.status, next.status)) return;
+  if (
+    current && current.turnId === next.turnId && current.ended === next.ended
+    && current.reasoning === next.reasoning && sameStatus(current.status, next.status)
+  ) return;
   threads.delete(threadId);
   threads.set(threadId, next);
   if (threads.size > MAX_THREADS) threads.delete(threads.keys().next().value!);
@@ -51,7 +58,7 @@ export function noteTurnEvent(event: RuntimeEvent): void {
     case "turn.completed":
     case "cap.exhausted":
     case "session.exited":
-      return put(threadId, { turnId, ended: true, status: null });
+      return put(threadId, { turnId, ended: true, status: null, ...(sameTurn && current?.reasoning ? { reasoning: current.reasoning } : {}) });
     case "turn.progress": {
       const { activity, tool, file, bytes, itemId, target, detail, quiet, tail } = event;
       return put(threadId, { turnId, ended: false, status: {
@@ -59,8 +66,15 @@ export function noteTurnEvent(event: RuntimeEvent): void {
         ...(target ? { target } : {}), ...(detail ? { detail } : {}), ...(quiet ? { quiet } : {}), ...(tail?.length ? { tail } : {}),
       } });
     }
-    case "content.delta":
-      return put(threadId, { turnId, ended: false, status: { activity: event.streamKind === "reasoning_text" ? "thinking" : "reply" } });
+    case "content.delta": {
+      const reasoning = event.streamKind === "reasoning_text"
+        ? `${sameTurn ? current?.reasoning ?? "" : ""}${event.delta}`.slice(-REASONING_CAP)
+        : sameTurn ? current?.reasoning : undefined;
+      return put(threadId, {
+        turnId, ended: false, status: { activity: event.streamKind === "reasoning_text" ? "thinking" : "reply" },
+        ...(reasoning ? { reasoning } : {}),
+      });
+    }
     case "item.started":
       return put(threadId, { ...live, ended: false, status: live.status?.itemId && live.status.itemId === event.itemId ? live.status : null });
     case "item.completed":

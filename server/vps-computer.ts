@@ -21,7 +21,7 @@ import {
   IMAGE_LAYER_VERSION,
   MANAGED_LABEL,
 } from "./container-computer.ts";
-import { PIDS_LIMIT, raisePidsLimit } from "./container-limits.ts";
+import { PER_BOT_VPS_MEMORY, PIDS_LIMIT, considerSharedDesktopMemory, raisePidsLimit, sharedProvisionMemory } from "./container-limits.ts";
 import { DATA_DIR, isValidSshAlias, vpsSshAlias, type AppConfig } from "./config.ts";
 import { augmentedPath } from "./env-path.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
@@ -140,7 +140,7 @@ export interface VpsComputerStatus {
   base_image_ref: string;
   driver_version: string;
   container_name: string;
-  container_id: string | null;
+  container_id: string | null; memoryBytes?: number; memoryHostBytes?: number; memoryDeferred?: boolean;
   image_id: string | null;
 }
 
@@ -244,7 +244,7 @@ function loopbackAnswers(port: number): Promise<boolean> {
   });
 }
 
-function stopDesktopTunnel(botId: string): boolean {
+export function stopDesktopTunnel(botId: string): boolean {
   const tunnel = desktopTunnels.get(botId);
   if (!tunnel) return false;
   desktopTunnels.delete(botId);
@@ -545,7 +545,7 @@ async function computeVpsComputerStatus(
     const detail = inspected[0];
     const labels = detail?.Config?.Labels;
     const containerId = detail?.Id ?? detail?.id;
-    status.container_id = containerId && CONTAINER_ID.test(containerId) ? containerId : null;
+    status.container_id = containerId && CONTAINER_ID.test(containerId) ? containerId : null; if (typeof detail?.HostConfig?.Memory === "number") status.memoryBytes = detail.HostConfig.Memory;
     status.container = detail?.State?.Running ? "running" : "stopped";
     status.imageMatches =
       status.image &&
@@ -561,6 +561,8 @@ async function computeVpsComputerStatus(
       labels?.[VPS_CONTAINER_LABEL] === status.container_name &&
       (environmentLabel === undefined || environmentLabel === vpsEnvironmentId());
     if (status.managed && status.container_id) raisePidsLimit(status.container_id, detail?.HostConfig?.PidsLimit, run);
+    const memoryLock = vpsLockKey(cfg, botId);
+    if (status.managed && botId.startsWith("openbot-shared-desktop:") && !(memoryLock && lifecycleLocks.has(memoryLock))) await considerSharedDesktopMemory(status, run);
     status.network = hasNoPublishedPorts(detail?.HostConfig, detail?.NetworkSettings?.Networks) ? "private" : "unsafe";
     status.mounts = hasNoHostMounts(detail ?? {}) ? "none" : "unsafe";
     status.security = dockerSecurityIsHardened(detail?.HostConfig, { restartPolicy: "any" })
@@ -819,11 +821,7 @@ export async function listManagedVpsComputers(
   return { configured: true, available: scans.every((scan) => scan.available), vpsAliases: scanning, problem, instances };
 }
 
-export function vpsContainerRunArgs(
-  containerName: string,
-  imageRef = VPS_IMAGE,
-  viewerSecret = randomBytes(18).toString("base64url"),
-): string[] {
+export function vpsContainerRunArgs(containerName: string, imageRef = VPS_IMAGE, viewerSecret = randomBytes(18).toString("base64url"), memory = PER_BOT_VPS_MEMORY): string[] {
   if (!CONTAINER_NAME.test(containerName) || (imageRef !== VPS_IMAGE && !IMAGE_ID.test(imageRef))) {
     throw new Error("invalid managed VPS container or image reference");
   }
@@ -850,9 +848,9 @@ export function vpsContainerRunArgs(
     "--label",
     `${IMAGE_LAYER_LABEL}=${IMAGE_LAYER_VERSION}`,
     "--memory",
-    "4g",
+    memory,
     "--memory-swap",
-    "4g",
+    memory,
     "--cpus",
     "2",
     "--pids-limit", String(PIDS_LIMIT),
@@ -1091,7 +1089,7 @@ export async function vpsComputerAction(
             imageRef = (await computeVpsComputerStatus(cfg, botId, runner)).image_id;
           }
           if (!imageRef) throw Object.assign(new Error("The prepared VPS image could not be identified"), { status: 409 });
-          await run(vpsContainerRunArgs(before.container_name, imageRef));
+          await run(vpsContainerRunArgs(before.container_name, imageRef, undefined, await sharedProvisionMemory(botId, run)));
         } else {
           assertUsableContainer(before);
           if (before.container === "stopped") await run(["start", containerRef]);
@@ -1248,7 +1246,7 @@ export function vpsContainerMcpArgs(alias: string, containerName: string): strin
   );
 }
 
-export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: string): {
+export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: string, reconnect = false): {
   command: string;
   args: string[];
   env: Record<string, string>;
@@ -1258,7 +1256,7 @@ export function vpsComputerMcp(cfg: AppConfig, botId: string, containerRef?: str
   return {
     command: process.execPath,
     args: [SPAWNED_PROXIES.vpsContainerMcp, alias, containerRef ?? vpsContainerName(botId)],
-    env: { ELECTRON_RUN_AS_NODE: "1" },
+    env: { ELECTRON_RUN_AS_NODE: "1", ...(reconnect ? { OMB_VPS_RECONNECT: "1" } : {}) },
   };
 }
 

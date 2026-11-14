@@ -51,7 +51,7 @@ it("for someone who may buy: what Cloud does, the Admin's lowest price and money
   const html = await card(signedOut);
   for (const text of ["OpenBot Cloud", "Keeps your bots and routines running 24/7, even when this computer is off.", "OpenBot Cloud plans from $15/month + tax.",
     "14-day money-back on every plan.", "OpenBot on this computer stays free and open source.", "Compare plans", "Start free trial", "Sign in to your Cloud plan"]) expect(html).toContain(text);
-  for (const gone of ["OMB", "$89", "launch price", "New features first", "Get Pro", "OpenBot Pro", "OpenBot Cloud"]) expect(html).not.toContain(gone);
+  for (const gone of ["OMB", "$89", "launch price", "New features first", "Get Pro", "OpenBot Pro"]) expect(html).not.toContain(gone);
   press("Start free trial");
   expect(f.dispatch).toHaveBeenCalledWith({ type: "openCloudAdd", source: "app_settings" });
   f.dispatch.mockClear();

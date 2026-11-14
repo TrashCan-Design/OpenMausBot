@@ -10,7 +10,10 @@ import type { PhoneSecretSubmissionRegistry } from "../phone-secret.ts";
 import { ownerOrAdmin, type RequestAuth } from "../request-auth.ts";
 import type { RoutineManager } from "../routines.ts";
 import type { SkillReview } from "../skill-review.ts";
-import { isProjectEmoji, type BotRecord, type Store, type TaskRecord } from "../store.ts";
+import { isProjectEmoji, threadTitleFrom, type BotRecord, type Store, type TaskRecord } from "../store.ts";
+import { openingBook, readOpeningSendId } from "../conversation-openings.ts";
+import { DATA_DIR } from "../config.ts";
+import { join } from "node:path";
 import { parseSurface } from "../surface.ts";
 import type { ThreadStarters } from "../thread-starters.ts";
 import { titleConversationExcerpt, type ThreadTitleSource } from "../thread-title.ts";
@@ -192,7 +195,24 @@ export function createTaskRoutes(deps: TaskRouteDeps): RouteHandler & { deleteTa
       if (body.projectId !== undefined && (typeof body.projectId !== "string" || !store.project(bot.id, body.projectId))) {
         return json(res, 400, { error: "projectId must belong to this bot" });
       }
-      const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined, body.select !== false, body.projectId, undefined, body.approvalMode, undefined, cwd);
+      const title = typeof body.title === "string" ? body.title : undefined;
+      let sendId: string | undefined;
+      try { sendId = readOpeningSendId(body.sendId); }
+      catch (error) { return json(res, 400, { error: error instanceof Error ? error.message : "sendId must be a client-generated id" }); }
+      const make = () => store.createTask(bot.id, title, body.select !== false, body.projectId, undefined, body.approvalMode, undefined, cwd);
+      if (sendId) {
+        const claimed = await openingBook(join(DATA_DIR, "conversation-openings.json")).claim(
+          { sendId, owner: "bot", ownerId: bot.id, title: threadTitleFrom(title) },
+          () => make(),
+          (threadId) => store.taskByThread(bot.id, threadId) !== undefined,
+        );
+        if (!claimed.ok) return json(res, claimed.status, { error: claimed.error });
+        const existing = store.taskByThread(bot.id, claimed.threadId);
+        if (!existing) return json(res, 409, { error: "that conversation was removed; choose a new send id" });
+        if (!claimed.replayed && auth.kind === "session") threadStarters.set(existing.threadId, actorKey(auth));
+        return json(res, claimed.replayed ? 200 : 201, { bot: publicBot(store.bot(bot.id)!), task: wireTask(existing, store.bot(bot.id)!.modelSelection) });
+      }
+      const task = make();
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       // Who opened it decides who may answer its cards on a shared workspace.
       if (auth.kind === "session") threadStarters.set(task.threadId, actorKey(auth));

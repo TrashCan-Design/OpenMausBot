@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
+import { ReconnectingMcp, type McpProcess } from "./mcp-reconnect.ts";
 import { CONTROL_ACT_WITHIN_MS, CONTROL_UNCONFIRMED, CONTROL_WAITED, controlRefusal, createControlClient, type ControlState } from "./control-client.ts";
 import { augmentedPath, resolveCliSpawn } from "./env-path.ts";
 import { textOnlyErrorResultLine } from "./mcp-error-result.ts";
@@ -109,12 +110,15 @@ export interface BridgeOptions {
   args: string[];
   env?: NodeJS.ProcessEnv;
   label: string;
+  reconnect?: boolean;
   /** docker's ssh connection helper takes no ConnectTimeout/ServerAlive options, so a dropped VPS wedges silently without this. */
   liveness?: BridgeLiveness;
   /** `describe`: what a tools/call would open, passed to the gate so the person can be asked in plain words. */
   gate?: { url: string; token: string; describe?: (frame: unknown) => Record<string, string> };
   journal?: { url: string; token: string };
   rewriteResponse?: (line: string) => string;
+  /** Rewrites a tools/call after the control gate has accepted it. A refusal is never rewritten into a forward. */
+  prepareLine?: (line: string) => string;
   /** A tools/call the bridge carries out itself through the child, answering the agent with what this resolves to; null
    * forwards the frame as it came. Frames after it wait, so the agent's calls still act in order. */
   relay?: (call: ToolCall, child: ChildCalls) => Promise<unknown> | null;
@@ -310,7 +314,7 @@ export function createChildCalls(write: (line: string) => void) {
 export function runMcpBridge(options: BridgeOptions): void {
   const env = options.env ?? { ...process.env, PATH: augmentedPath() };
   const { command, args } = resolveCliSpawn(options.command, options.args, env);
-  const child = spawn(command, args, {
+  const child: McpProcess = options.reconnect ? new ReconnectingMcp(command, args, env) : spawn(command, args, {
     shell: false,
     env,
     stdio: ["pipe", "pipe", "pipe"],
@@ -348,12 +352,17 @@ export function runMcpBridge(options: BridgeOptions): void {
     respond(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result }));
   };
   let sending: Promise<void> = Promise.resolve();
+  const prepare = (line: string) => {
+    if (!options.prepareLine) return line;
+    try { return options.prepareLine(line); } catch { return line; }
+  };
   const forward = (line: string): void | Promise<void> => {
+    const prepared = prepare(line);
     if (!options.relay) {
-      child.stdin.write(line + "\n");
+      child.stdin.write(prepared + "\n");
       return;
     }
-    sending = sending.then(() => send(line)).catch(() => {});
+    sending = sending.then(() => send(prepared)).catch(() => {});
     return sending;
   };
   const intercept = createMcpBridgeInterceptor({
@@ -395,6 +404,7 @@ export function runMcpBridge(options: BridgeOptions): void {
       inactivityMs: BRIDGE_INACTIVITY_MS,
       probe: () => runLivenessProbe(liveness, PROBE_TIMEOUT_MS, options.env),
       onDead: () => {
+        if (child instanceof ReconnectingMcp) { child.reconnect(); return; }
         process.stderr.write(
           `${options.label} transport went silent and stopped answering liveness probes; ending the bridge\n`,
         );

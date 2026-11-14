@@ -122,29 +122,11 @@ describe("organisation sign-in row in the welcome flow", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("signs in to the default Admin once, then follows the browser step to connected", async () => {
+  it("does not offer a hosted Admin sign-in when this build has no Admin address", async () => {
     await mount();
-    const signIn = button("Sign in")!;
-    signIn.props.onClick!();
-    signIn.props.onClick!();
-    await flush();
-    expect(bridge.begin).toHaveBeenCalledExactlyOnceWith({ portalOrigin: "https://admin.openmausbot.com" });
-
-    let html = render().html;
-    expect(html).toContain("Finish in your browser");
-    expect(html).toContain("ABCDE-FGHIJ");
-    expect(html).not.toContain("Using OpenBot at work?");
-    expect(onConnected).not.toHaveBeenCalled();
-
-    push(connected);
-    html = render().html;
-    expect(html).toContain("Signed in to Fixture Company");
-    expect(html).toContain("Company models: 3");
-    expect(html).not.toContain("ABCDE-FGHIJ");
-    expect(onConnected).toHaveBeenCalledOnce();
-    push(connected);
-    expect(onConnected).toHaveBeenCalledOnce();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(button("Sign in")).toBeUndefined();
+    expect(bridge.begin).not.toHaveBeenCalled();
+    expect(render().html).toContain("Other Admin address");
   });
 
   it("can cancel a sign-in in progress", async () => {
@@ -180,24 +162,10 @@ describe("organisation sign-in row in the welcome flow", () => {
     expect(onOpenSettings).toHaveBeenCalledOnce();
   });
 
-  it("shows product copy for a failed action, never the IPC error", async () => {
-    await mount();
-    vi.mocked(bridge.begin).mockRejectedValueOnce(new Error("Private /path token-secret"));
-    button("Sign in")!.props.onClick!();
-    await flush();
-    const html = render().html;
-    expect(html).toContain("Could not complete this action");
-    expect(html).not.toContain("token-secret");
-  });
-
   it("unsubscribes and ignores late answers once the beat closes", async () => {
     const cleanup = await mount();
-    let resolveBegin!: (state: ManagedDesktopState) => void;
-    vi.mocked(bridge.begin).mockImplementation(() => new Promise((resolve) => { resolveBegin = resolve; }));
-    button("Sign in")!.props.onClick!();
     if (typeof cleanup === "function") cleanup();
     push(connected);
-    resolveBegin(connecting);
     await flush();
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(render().html).not.toContain("Fixture Company");

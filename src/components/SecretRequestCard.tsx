@@ -9,21 +9,25 @@ import { keySaved, keySaveFailure, savedKeyResult } from "@/lib/product-events";
 import { api, useStore, type Bot, type ConfigStatus, type Message } from "@/state/store";
 import { ASK_FIELD, askPrimary, ASK_QUIET_BUTTON, AskCard, AskSettledLine, returnFocusToComposer } from "./AskCard";
 import { productName } from "@/lib/brand";
+import { VaultChoices } from "./VaultChoices";
 
 // Security: the value goes straight to the host's settings, never into the chat.
 
 export function SecretRequestCard({
   botId,
+  botName,
   color,
   threadId,
   message,
 }: {
   botId: string;
+  botName?: string;
   color?: Bot["color"];
   threadId: string;
   message: Message;
 }) {
   const { dispatch } = useStore();
+  const authorName = message.from?.name ?? botName;
   const secret = message.secret!;
   const remoteClient = window.ogb?.remoteClient?.active === true;
   const [value, setValue] = useState("");
@@ -200,7 +204,8 @@ export function SecretRequestCard({
         <div className="text-[13px] leading-relaxed text-ink-secondary">
           This key must be saved on the host computer. Open this conversation on the host to continue securely.
         </div>
-      ) : (
+      ) : (<>
+        {custom && <VaultChoices kind="secret" botId={botId} botName={authorName} threadId={threadId} messageId={message.id} />}
         <form onSubmit={(event) => void save(event)}>
           <div className="flex flex-wrap gap-2">
             <input
@@ -237,7 +242,7 @@ export function SecretRequestCard({
             )}
           </div>
         </form>
-      )}
+      </>)}
       {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
     </AskCard>
   );

@@ -311,6 +311,16 @@ it("preserves local desktop URLs and removes passwords from paired viewer links"
   expect(localVmViewerStatus(original, remote).viewer_url).toBe(desktopViewerUrl(viewerTargetId(targets[1])));
 });
 
+it("drains viewer connections before a shared owner can hand back control", async () => {
+  vpsTarget = { key: "vps/test-bot", resolve: async () => ({ port: desktopPort, password: "fixture-secret" }) };
+  const socket = (await open("/api/desktop-viewer/vps/test-bot/websockify")).socket!;
+  const closed = once(socket, "close");
+  await viewer.drainForTarget("vps/test-bot");
+  await closed;
+  expect(socket.destroyed).toBe(true);
+  await viewer.drainForTarget("vps/test-bot");
+});
+
 it("uses the same authenticated proxy for VPS and releases only its own connection", async () => {
   let holds = 0;
   vpsTarget = { key: "vps/test-bot", resolve: async () => ({

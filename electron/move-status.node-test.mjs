@@ -11,7 +11,7 @@ const CLOUD = "https://omb-t-1.fly.dev";
 const ACCOUNT = { id: "acct-1", email: "person@example.test" };
 const reply = (status, body = {}) => ({ ok: status < 400, status, body });
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status });
-/** The MausBot Cloud sign-in's state (cloud-account.mjs) for an account with a ready Cloud of its own it may move to. */
+/** The OpenBot Cloud sign-in's state (cloud-account.mjs) for an account with a ready Cloud of its own it may move to. */
 const signedIn = (patch = {}) => ({ status: "connected", account: ACCOUNT, deviceId: "device-1", entitlement: { plan: "pro", tier: "personal", status: "active", expiresAt: 1, version: 1 },
   machine: { status: "ready", origin: CLOUD, moves: true }, ...patch });
 const journalOf = (patch = {}) => ({ v: 1, phase: "copy", cloud: { origin: CLOUD, account: ACCOUNT.id, machine: CLOUD }, startedAt: 1_700_000_000_000, ...patch });

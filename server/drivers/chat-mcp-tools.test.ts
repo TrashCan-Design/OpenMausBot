@@ -12,19 +12,37 @@ import { whopLikeCatalog } from "../testing/whop-like-catalog.ts";
 import { wideSchema } from "../testing/oversized-tool-schema.ts";
 import { schemaBytes, toolSchemaProfile } from "../tool-schema-profile.ts";
 
-const killProbe = vi.hoisted(() => ({ override: false, stopped: false, budgets: [] as number[] }));
+const killProbe = vi.hoisted(() => ({ override: false, stopped: false, budgets: [] as number[], leafScripts: new Set<string>(), leafChildren: new WeakSet<object>() }));
 vi.mock("../procs.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../procs.ts")>();
   return {
     ...actual,
-    // Always runs the real kill for cleanup; the override only forces the verdict and records the budget.
+    spawnCli: (...args: Parameters<typeof actual.spawnCli>) => {
+      const child = actual.spawnCli(...args);
+      if (killProbe.leafScripts.has(args[0])) killProbe.leafChildren.add(child);
+      return child;
+    },
+    // Protocol fixtures marked leaf cannot spawn descendants. Production tree verification has a separate capability check.
     killCliTree: (child: Parameters<typeof actual.killCliTree>[0], budget = 5_000) => {
       killProbe.budgets.push(budget);
-      const run = actual.killCliTree(child, budget);
+      const run = killProbe.leafChildren.has(child) ? new Promise<boolean>(resolve => {
+        if (child.exitCode !== null || child.signalCode !== null) return resolve(true);
+        const timer = setTimeout(() => child.kill("SIGKILL"), 1_000);
+        const deadline = setTimeout(() => { clearTimeout(timer); resolve(false); }, 5_000);
+        child.once("close", () => { clearTimeout(timer); clearTimeout(deadline); resolve(true); });
+        child.kill("SIGTERM");
+      }) : actual.killCliTree(child, budget);
       return killProbe.override ? run.then(() => killProbe.stopped) : run;
     },
   };
 });
+
+const treeCleanupSupported = await (async () => {
+  const { spawnCli, killCliTree } = await import("../procs.ts");
+  const probe = spawnCli(process.execPath, ["-e", "process.exit(0)"], { stdio: ["pipe", "pipe", "pipe"] });
+  await new Promise(resolve => probe.once("close", resolve));
+  return killCliTree(probe, 100);
+})();
 
 const dirs: string[] = [];
 const sessions: ChatToolSession[] = [];
@@ -62,6 +80,7 @@ function fixture(body = "", toolSchema: Record<string, unknown> = schema) {
     });
   `);
   chmodSync(script, 0o755);
+  if (!body.includes("spawn(")) killProbe.leafScripts.add(script);
   const controller = new AbortController();
   controllers.push(controller);
   const server: { command: string; args: string[]; env: Record<string, string> } = { command: script, args: [], env: { RECEIPT: receipt } };
@@ -204,7 +223,7 @@ describe("Chat MCP session", () => {
       sessions.push(session);
       const [definition] = session.definitions;
       expect(schemaBytes(definition!.function.parameters)).toBeLessThanOrEqual(12_000);
-      expect(definition!.function.description).toContain("OpenMausBot shortened this tool's parameters to fit Kimi's size limit");
+      expect(definition!.function.description).toContain("OpenBot shortened this tool's parameters to fit Kimi's size limit");
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^chat-mcp: audit: kept only the top-level fields of tool "write"'s parameters/));
       expect(() => session.validate("audit_write", { field_000: { label: 5 } })).toThrow("input schema");
       expect(() => session.validate("audit_write", { field_000: { label: "five" } })).not.toThrow();
@@ -401,7 +420,7 @@ describe("Chat MCP session", () => {
     expect(result.text).not.toContain("�");
   });
 
-  it.each(["initialize", "tools/list", "tools/call"])("cancels %s and awaits its owned process tree", async (method) => {
+  it.skipIf(!treeCleanupSupported).each(["initialize", "tools/list", "tools/call"])("cancels %s and awaits its owned process tree", async (method) => {
     const f = fixture(`if (message.method === ${JSON.stringify(method)}) {
       const helper = spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});
       helper.on("spawn",()=>writeFileSync(receipt,JSON.stringify({pid:process.pid,helper:helper.pid,calls})));
@@ -440,6 +459,14 @@ describe("Chat MCP shutdown verdict", () => {
       await expect(session.close()).resolves.toBeUndefined();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("chat-mcp:"));
     } finally { warn.mockRestore(); }
+  });
+
+  it("retains uncertainty after a broken transport has rejected and cleared its pending calls", async () => {
+    const f = fixture(`if (message.method === "tools/call") { process.stdout.write("broken\\n"); continue; }`);
+    const session = await mountChatTools({ custom: { audit: f.server } }, f.controller.signal);
+    killProbe.override = true; killProbe.stopped = false;
+    await expect(session.execute("audit_write", { value: "sent" }, f.controller.signal)).rejects.toBeInstanceOf(ChatToolSessionError);
+    await expect(session.close()).rejects.toThrow("shutdown could not be confirmed");
   });
 
   it("an unconfirmed shutdown still fails close when a call was in flight", async () => {
@@ -493,7 +520,7 @@ describe("Chat MCP shutdown verdict", () => {
 const grantFor = (server: string, tool: string) => expect.stringMatching(new RegExp(`^\\["${server}","[0-9a-f]{64}","${tool}"\\]$`));
 
 describe("Chat MCP approvals by server", () => {
-  it("asks nothing for OpenMausBot's agents server, and grants no session-wide allow on the person's computer", async () => {
+  it("asks nothing for OpenBot's agents server, and grants no session-wide allow on the person's computer", async () => {
     const agents = fixture(); const audit = fixture(); const computer = fixture();
     const session = await mountChatTools({
       agents: agents.server, custom: { audit: audit.server },
@@ -803,6 +830,15 @@ describe("Chat MCP schema validation", () => {
     const session = await f.mount();
     expect(() => session.validate("audit_write", {value:[1]})).toThrow("input schema");
     expect(() => session.validate("audit_write", {value:[2]})).not.toThrow();
+  });
+
+  it("keeps valid tools when a neighbor has an unsupported schema", async () => {
+    const f = fixture(`if (message.method === "tools/list") { reply(message, { tools: [{ name: "broken", inputSchema: { type: "object", unsupportedConstraint: true } }, { name: "write", inputSchema: schema }] }); continue; }`);
+    const session = await f.mount();
+    expect(session.definitions.map(tool => tool.function.name)).toEqual(["audit_write"]);
+    expect(session.skipped).toEqual([{ server: "audit", reason: expect.stringContaining("schema could not be validated") }]);
+    expect(() => session.validate("audit_write", { value: 42 })).toThrow("input schema");
+    expect(() => session.validate("audit_write", { value: "ok" })).not.toThrow();
   });
 
   it("accepts GitHub MCP's x-mcp-header annotation and still enforces the schema", async () => {

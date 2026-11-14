@@ -323,7 +323,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("ends a tool call that arrives already finished, so nothing counts it as running", async () => {
     await create(GrokAgentDriver, "finished-tools");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-finished-tools", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-finished-tools", text: "send a screenshot" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const started = recorder.events.flatMap((e) => e.type === "item.started" && e.itemType === "tool" ? [e.itemId] : []);
     const completed = new Map(recorder.events.flatMap((e) =>
@@ -353,12 +353,19 @@ describe("ACP turns (fake CLI)", () => {
 
   it("completes a finished tool call once, though a later terminal update names it again", async () => {
     await create(GrokAgentDriver, "finished-tools");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-finished-twice", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-finished-twice", text: "send a screenshot" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const ends = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "tool" && e.itemId === "tc-done");
     expect(ends).toHaveLength(1);
     expect(ends[0]).toMatchObject({ ok: true, output: expect.stringContaining("ok") });
     expect(recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_image")).toHaveLength(1);
+  });
+
+  it("does not attach a tool screenshot the person did not ask for", async () => {
+    await create(GrokAgentDriver, "finished-tools");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-finished-quiet", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(recorder.events.some((e) => e.type === "item.completed" && e.itemType === "assistant_image")).toBe(false);
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
@@ -445,7 +452,7 @@ describe("ACP turns (fake CLI)", () => {
       .toBe("Standing rules.\n\nMemory: likes quiet hours.\n\nfirst");
     expect(await send("second", "Memory: likes quiet hours.")).toBe("second");
     expect(await send("third", "Memory: moved to Toronto."))
-      .toBe("Context from OpenMausBot updated since this conversation started; it replaces any earlier copy:\n\nMemory: moved to Toronto.\n\nthird");
+      .toBe("Context from OpenBot updated since this conversation started; it replaces any earlier copy:\n\nMemory: moved to Toronto.\n\nthird");
     expect(await send("fourth", "")).toContain("have been cleared");
     expect(await send("fifth", "")).toBe("fifth");
   });
@@ -1142,7 +1149,7 @@ describe("ACP turns (fake CLI)", () => {
     });
   });
 
-  it("hands an agent that reaches MCP servers by URL OpenMausBot's own servers as endpoints of this server, no proxy process", async () => {
+  it("hands an agent that reaches MCP servers by URL OpenBot's own servers as endpoints of this server, no proxy process", async () => {
     await create(createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "httpMcpTest", selectModel: undefined, ownMcpOverHttp: true }));
     const dump = join(scratch, "own-http.json");
     process.env.FAKE_ACP_DUMP = dump;
@@ -1317,7 +1324,7 @@ describe("ACP turns (fake CLI)", () => {
   it.each([
     ["advertises no remote transport", undefined],
     ["advertises http and sse", "http,sse"],
-  ])("mounts every url server as OpenMausBot's connector for an agent that %s", async (_name, transports) => {
+  ])("mounts every url server as OpenBot's connector for an agent that %s", async (_name, transports) => {
     if (transports) process.env.FAKE_ACP_MCP_TRANSPORTS = transports;
     try {
       await create();
@@ -1340,7 +1347,7 @@ describe("ACP turns (fake CLI)", () => {
   });
 
   // The fake agent connects each mounted server with grok 1.0.25's handshake, which a strict server refuses.
-  it("lists a strict url server's tools through OpenMausBot's connector, even for an agent that speaks http", async () => {
+  it("lists a strict url server's tools through OpenBot's connector, even for an agent that speaks http", async () => {
     const strict = await startFakeHttpMcp({ strictInitialize: "http-400", strictSchema: "2025-11-25",
       tools: [{ name: "report", inputSchema: { type: "object" } }, { name: "campaigns", inputSchema: { type: "object" } }],
       requireHeader: { name: "Authorization", value: "Bearer tok-voluum" } });
@@ -1353,7 +1360,7 @@ describe("ACP turns (fake CLI)", () => {
       expect(await recorder.until((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
       const text = recorder.events.find((event) => event.type === "item.completed" && (event as { itemType?: string }).itemType === "assistant_text");
       expect((text as { text?: string } | undefined)?.text).toBe("voluum: report,campaigns");
-      expect(strict.initializes).toEqual([{ protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "OpenMausBot tool proxy", version: "1" } }]);
+      expect(strict.initializes).toEqual([{ protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "OpenBot tool proxy", version: "1" } }]);
     } finally {
       delete process.env.FAKE_ACP_MCP_TRANSPORTS;
       await strict.close();
@@ -1787,6 +1794,35 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.respondToRequest("t-always-native", (opened as { requestId: string }).requestId, { behavior: "allow", always: true });
     await recorder.until((e) => e.type === "turn.completed");
     expect(readFileSync(answer, "utf8")).toBe("allow-always");
+  });
+
+  it("keeps a desktop Always allow inside this driver instead of handing it to the agent", async () => {
+    process.env.FAKE_ACP_ALLOW_ALWAYS = "1";
+    process.env.FAKE_ACP_PERMISSION_TOOL_CALL = JSON.stringify({ kind: "other", title: "mcp__computer__click", rawInput: { x: 3, y: 4 } });
+    const answer = join(scratch, "computer-always.txt");
+    process.env.FAKE_ACP_PERMISSION_ANSWER = answer;
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: "t-computer-always", text: "go", approvalMode: "ask" });
+    const opened = await recorder.until((event) => event.type === "request.opened");
+    await instance.adapter.respondToRequest("t-computer-always", (opened as { requestId: string }).requestId, { behavior: "allow", always: true });
+    await recorder.until((event) => event.type === "turn.completed");
+    expect(readFileSync(answer, "utf8")).toBe("allow-once");
+    const second = await instance.adapter.sendTurn({ threadId: "t-computer-always", text: "again", approvalMode: "ask", resumeCursor: "fake-acp-session" });
+    await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
+    expect(recorder.events.filter((event) => event.type === "request.opened")).toHaveLength(1);
+    expect(readFileSync(answer, "utf8")).toBe("allow-once");
+  });
+
+  it("cancels an open permission when the person stops the turn", async () => {
+    const answer = join(scratch, "permission-stop.txt");
+    process.env.FAKE_ACP_PERMISSION_ANSWER = answer;
+    await create(GrokAgentDriver, "permission");
+    await instance.adapter.sendTurn({ threadId: "t-permission-stop", text: "go", approvalMode: "ask" });
+    await recorder.until((event) => event.type === "request.opened");
+    await instance.adapter.interruptTurn("t-permission-stop");
+    const done = await recorder.until((event) => event.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(readFileSync(answer, "utf8")).toBe("cancelled");
   });
 
   it("remembers the exact operation for the session when the agent offers no allow_always", async () => {

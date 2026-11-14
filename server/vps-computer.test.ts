@@ -91,6 +91,7 @@ function fixture({
   desktopProbeFails = false,
   securityOpt = [],
   memory = 4 * 1024 * 1024 * 1024,
+  hostBytes = 8 * 1024 * 1024 * 1024,
   restartPolicyName = "unless-stopped",
   hostConfig = {},
   cgroupnsMode,
@@ -119,6 +120,7 @@ function fixture({
   desktopProbeFails?: boolean;
   securityOpt?: string[];
   memory?: number;
+  hostBytes?: number;
   restartPolicyName?: string;
   hostConfig?: Record<string, unknown>;
   cgroupnsMode?: string;
@@ -137,6 +139,7 @@ function fixture({
   const runner: VpsCommandRunner = async (args, options) => {
     calls.push({ args, options });
     const command = args[2];
+    if (command === "info") return { stdout: `${hostBytes}\n`, stderr: "" };
     if (command === "image") {
       // The real daemon phrases a clean absence this way; anything else reads as a transport failure.
       if (!state.image) throw new Error(`Error: No such image: ${VPS_IMAGE}`);
@@ -454,7 +457,18 @@ describe("VPS computer", () => {
     const status = await vpsComputerAction("provision", CONFIG, BOT_ID, provision.runner);
     expect(status.ready).toBe(true);
     const run = provision.calls.find(({ args }) => args[2] === "run")?.args ?? [];
-    expect(run).toContain("--memory");
+    expect(run[run.indexOf("--memory") + 1]).toBe("4g");
+    expect(run[run.indexOf("--memory-swap") + 1]).toBe("4g");
+    const shared = fixture({ image: false, container: false });
+    await vpsComputerAction("provision", CONFIG, "openbot-shared-desktop:production", shared.runner);
+    const sharedRun = shared.calls.find(({ args }) => args[2] === "run")?.args ?? [];
+    expect(sharedRun[sharedRun.indexOf("--memory") + 1]).toBe("6g");
+    expect(sharedRun[sharedRun.indexOf("--memory-swap") + 1]).toBe("6g");
+    const tight = fixture({ image: false, container: false, hostBytes: 7 * 1024 * 1024 * 1024 });
+    await vpsComputerAction("provision", CONFIG, "openbot-shared-desktop:tight", tight.runner);
+    const tightRun = tight.calls.find(({ args }) => args[2] === "run")?.args ?? [];
+    expect(tightRun[tightRun.indexOf("--memory") + 1]).toBe("4g");
+    expect(shared.calls.some(({ args }) => args[2] === "rm")).toBe(false);
     expect(run[run.indexOf("--pids-limit") + 1], "Firefox needs room for its threads").toBe(String(PIDS_LIMIT));
     expect(run).toContain("--ipc");
     expect(run[run.indexOf("--ipc") + 1]).toBe("private");
@@ -624,6 +638,8 @@ describe("VPS computer", () => {
     expect(connection.args.slice(-2)).toEqual(["production-vps", vpsContainerName(BOT_ID)]);
     expect(connection.env).toEqual({ ELECTRON_RUN_AS_NODE: "1" });
     expect(vpsComputerMcp(CONFIG, BOT_ID, CONTAINER_ID).args.slice(-2)).toEqual(["production-vps", CONTAINER_ID]);
+    expect(vpsComputerMcp(CONFIG, BOT_ID, CONTAINER_ID).env.OMB_VPS_RECONNECT).toBeUndefined();
+    expect(vpsComputerMcp(CONFIG, BOT_ID, CONTAINER_ID, true).env.OMB_VPS_RECONNECT).toBe("1");
     expect(vpsContainerMcpArgs("production-vps", vpsContainerName(BOT_ID))).toEqual([
       "-H",
       "ssh://production-vps",
@@ -1049,7 +1065,7 @@ describe("VPS computer", () => {
     expect(rebuilt.ready).toBe(true);
   });
 
-  it("never removes a container OpenMausBot did not create", async () => {
+  it("never removes a container OpenBot did not create", async () => {
     const unowned = fixture({ managed: false });
     await expect(vpsComputerAction("remove", CONFIG, BOT_ID, unowned.runner)).rejects.toThrow(/did not create/);
     expect(unowned.calls.some(({ args }) => args[2] === "rm")).toBe(false);

@@ -1,4 +1,11 @@
 // Unit level: the 45 s e2e wait is too slow for the suite, and what matters is the decision table, not the constant.
+import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { CONTROL_REFUSAL_PLAIN, CONTROL_UNCONFIRMED, CONTROL_WAITED, type ControlState } from "./control-client.ts";
@@ -453,5 +460,72 @@ describe("createReplyQueue", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(seen).toEqual(["a", "b", "c"]);
     expect(written).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("runMcpBridge control gating", () => {
+  it("gates per-bot calls without accepting authority to acknowledge shared actions", async () => {
+    const hits: string[] = [];
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      hits.push(`${url.searchParams.get("tool") ?? ""}:${url.searchParams.get("phase") ?? ""}`);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ held: false, helpOpen: false }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    const dir = mkdtempSync(join(tmpdir(), "omb-bridge-"));
+    const driver = join(dir, "driver.mjs");
+    const runner = join(dir, "runner.mjs");
+    writeFileSync(driver, `let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let newline;
+  while ((newline = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.method !== "tools/call") continue;
+    const failed = message.params.arguments && message.params.arguments.fail === true;
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { isError: failed, content: [] } }) + "\\n");
+  }
+});
+`);
+    writeFileSync(runner, `import { runMcpBridge } from ${JSON.stringify(pathToFileURL(join(process.cwd(), "server/mcp-bridge.ts")).href)};
+runMcpBridge({
+  command: process.execPath,
+  args: ["--experimental-strip-types", ${JSON.stringify(driver)}],
+  label: "bridge-test",
+  gate: {
+    url: ${JSON.stringify(`http://127.0.0.1:${port}/api/internal/computer-control?botId=b`)},
+    token: "token",
+    describe: (frame) => {
+      const name = frame && frame.params && frame.params.name;
+      return typeof name === "string" ? { tool: name } : {};
+    },
+  },
+});
+`);
+    const bridge = spawn(process.execPath, ["--experimental-strip-types", runner], { stdio: ["pipe", "pipe", "pipe"] });
+    const stderr: Buffer[] = [];
+    bridge.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    const call = (name: string, args: Record<string, unknown>) => bridge.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: name, method: "tools/call", params: { name, arguments: args } }) + "\n");
+    try {
+      call("get_desktop_state", {});
+      call("click", { fail: true });
+      await vi.waitFor(() => {
+        expect(hits).toContain("get_desktop_state:");
+        expect(hits).toContain("click:");
+      }, { timeout: 10_000 });
+      expect(hits.some(hit => hit === ":seen" || hit === ":end")).toBe(false);
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : error}\n${Buffer.concat(stderr).toString()}`);
+    } finally {
+      bridge.kill("SIGKILL");
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

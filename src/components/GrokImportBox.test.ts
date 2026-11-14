@@ -24,7 +24,8 @@ describe("From Grok Bot", () => {
     });
     const shown = text(markup);
     expect(shown).toContain("From Grok Bot");
-    expect(shown).toMatch(/DOGE by Avid Audits your other bots\. Start from description/);
+    expect(shown).toContain("Paste the link, then the full export, then preview, then import.");
+    expect(shown).toMatch(/DOGE by Avid Audits your other bots\. This public page has the name and description only\. Instructions, skills, memories, and routines come from the full export\. Start from description/);
     expect(shown).toContain("Copy export prompt Paste this into your Grok Bot, then paste its reply here.");
     expect(markup).toContain('aria-label="Reply from your Grok Bot"');
     expect(markup).toContain('aria-label="Grok Bot share link"');

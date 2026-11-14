@@ -95,7 +95,7 @@ describe("who may", () => {
     readTeamRolesWith(() => "admin");
     const { host, rows } = setup([entry("a", "done")], [MAUS, pip, chief, team]);
     for (const id of ["pip", "chief", "missing"]) {
-      expect(listUnread(host, id)).toEqual({ ok: false, error: "Only MausBot reads notifications in chat." });
+      expect(listUnread(host, id)).toEqual({ ok: false, error: "Only OpenBot reads notifications in chat." });
       expect(markRead(host, id, ["a"])).toMatchObject({ ok: false });
     }
     expect(listUnread(host, "ada")).toMatchObject({ ok: false, error: expect.stringContaining("On a team") });

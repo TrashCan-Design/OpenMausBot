@@ -1,3 +1,5 @@
+const { deflateSync } = require("zlib");
+
 const DEFAULT_BOUNDS = Object.freeze({ width: 1040, height: 760 });
 const MIN_BOUNDS = Object.freeze({ width: 840, height: 620 });
 
@@ -83,6 +85,57 @@ function resolveWindowState(state, workAreas, defaults = DEFAULT_BOUNDS) {
   };
 }
 
+function crc32(bytes) {
+  let crc = ~0;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return ~crc >>> 0;
+}
+
+function pngChunk(type, data) {
+  const name = Buffer.from(type);
+  const body = Buffer.concat([name, data]);
+  const out = Buffer.alloc(12 + data.length);
+  out.writeUInt32BE(data.length, 0);
+  body.copy(out, 4);
+  out.writeUInt32BE(crc32(body), 8 + data.length);
+  return out;
+}
+
+/** A blue dot with a white ring, so it stays visible on a blue taskbar and at 200% scaling. */
+function unreadOverlayPng(size = 16) {
+  const pixels = size === 32 ? 32 : 16;
+  const raw = Buffer.alloc(pixels * (1 + pixels * 4));
+  const center = (pixels - 1) / 2;
+  const outer = pixels / 2 - 0.5;
+  const inner = outer - Math.max(1, pixels / 16);
+  for (let y = 0; y < pixels; y += 1) {
+    const row = y * (1 + pixels * 4);
+    for (let x = 0; x < pixels; x += 1) {
+      const distance = Math.hypot(x - center, y - center);
+      const color = distance <= inner ? [37, 99, 235, 255] : distance <= outer ? [255, 255, 255, 255] : [0, 0, 0, 0];
+      const at = row + 1 + x * 4;
+      raw[at] = color[0];
+      raw[at + 1] = color[1];
+      raw[at + 2] = color[2];
+      raw[at + 3] = color[3];
+    }
+  }
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(pixels, 0);
+  header.writeUInt32BE(pixels, 4);
+  header[8] = 8;
+  header[9] = 6;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", header),
+    pngChunk("IDAT", deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
 function normalizeUnreadCount(value) {
   if (!Number.isFinite(value)) return 0;
   return clamp(Math.trunc(value), 0, 999);
@@ -92,6 +145,7 @@ module.exports = {
   DEFAULT_BOUNDS,
   MIN_BOUNDS,
   normalizeUnreadCount,
+  unreadOverlayPng,
   parseWindowState,
   resolveWindowState,
 };

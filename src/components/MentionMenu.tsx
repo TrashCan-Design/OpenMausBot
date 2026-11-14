@@ -11,7 +11,7 @@ import { ComposerMenuRow } from "./ComposerMenuRow";
 import type { MenuMotion } from "./MenuMotion";
 import { PersonFace } from "./TeamOwner";
 
-/** One row of the @ list: a bot, a teammate on a Team Cloud, a whole team, everyone, or the OpenBot team (@devs). */
+/** One row of the @ list: a bot, a teammate on a Team Cloud, a whole team, or everyone. */
 export type MentionChoice = { id: string; name: string; bot?: Bot; person?: TeamPerson; team?: { count: number }; all?: { count: number } };
 
 /** The @ list's rows for a Team Cloud's teammates, after the bots. */

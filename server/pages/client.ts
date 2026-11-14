@@ -25,7 +25,7 @@ interface Minted {
   plan?: string;
 }
 
-export const SIGN_IN_MESSAGE = "Publishing a page needs a OpenBot account. Sign in to OpenBot in the app's Settings, then ask again.";
+export const SIGN_IN_MESSAGE = "Publishing a page needs an OpenBot account. Sign in to OpenBot in the app's Settings, then ask again.";
 const UNAVAILABLE = "Publishing isn't available right now. Try again in a few minutes.";
 const NOT_TURNED_ON = "Publishing pages isn't turned on for this account yet.";
 const TOKEN_TIMEOUT_MS = 15_000, UPLOAD_TIMEOUT_MS = 60_000;

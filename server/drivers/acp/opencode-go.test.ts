@@ -1114,7 +1114,9 @@ describe("OpenCode session variants", () => {
     const run = async (input: Partial<SendTurnInput> = {}) => {
       promptsBefore = promptCount();
       pidBefore = dumpPid();
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "variant-thread", text: "fixture", model, ...input });
+      const cwd = join(scratch, input.threadId ?? "variant-thread");
+      mkdirSync(cwd, { recursive: true });
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "variant-thread", text: "fixture", model, cwd, ...input });
       const done = await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId);
       return { done, events: recorder.events.filter((event) => event.turnId === turnId) };
     };

@@ -20,13 +20,10 @@ it("says Updating My Cloud… while the page the window reloaded for its newer v
   expect(line(true, true, { updating: true }).text, "loaded: the update is over").toBe("app.loading.noBots");
 });
 
-it("learns from the desktop app that the window reloaded My Cloud's page for its newer version", () => {
-  vi.stubGlobal("window", { ogb: { home: { updating: true } } });
-  expect(loadingLine({ connected: false, hydrated: false, developer: false }).text).toBe("app.loading.updating");
-  vi.stubGlobal("window", { ogb: { home: { updating: false } } });
-  expect(loadingLine({ connected: false, hydrated: false, developer: false }).text).toBe("app.loading.connecting");
-  vi.stubGlobal("window", {});
-  expect(loadingLine({ connected: false, hydrated: false, developer: false }).text, "a browser").toBe("app.loading.connecting");
+it("uses the desktop-provided updating state supplied by the app", () => {
+  expect(line(false, false, { updating: true }).text).toBe("app.loading.updating");
+  expect(line(false, false, { updating: false }).text).toBe("app.loading.connecting");
+  expect(line(false, false).text, "a browser").toBe("app.loading.connecting");
 });
 
 it("names the command that starts a server only in a developer's build, while nothing answers", () => {

@@ -337,7 +337,7 @@ export const TOOLS: McpToolDefinition[] = [
       properties: {
         target_type: { type: "string", enum: ["bot", "channel"] },
         target_id: { type: "string" },
-        title: { type: "string", description: "Optional task title." },
+        title: { type: "string", description: "Optional task title." }, send_id: { ...SEND_ID_SCHEMA, description: "The same id as the message that follows. A retry returns the conversation this id already opened." },
       },
       required: ["target_type", "target_id"],
       additionalProperties: false,
@@ -996,7 +996,7 @@ export async function handleToolCall(
       const targetId = idArg(args, "target_id");
       const title = optionalStringArg(args, "title", { max: 80 });
       const route = taskRoute(args.target_type, targetId);
-      const result = await fetcher(route, { method: "POST", body: JSON.stringify(title ? { title } : {}) });
+      const result = await fetcher(route, { method: "POST", body: JSON.stringify({ ...(title ? { title } : {}), ...sendIdArg(args) }) });
       if (!isRecord(result?.task) || typeof result.task.threadId !== "string") {
         throw new Error("OpenBot did not return the created task");
       }

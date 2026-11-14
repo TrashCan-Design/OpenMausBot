@@ -49,6 +49,7 @@ export interface BotPatchRouteDeps {
   supportsApprovalMode: ReturnType<typeof createApprovalModeSupport>;
   routines(): RoutineManager | null;
   activeVpsThreads: { has(botId: string): boolean };
+  sharedVpsControlHeld?: (bot: BotRecord) => boolean;
   /** Full access comes only from the workspace policy. */
   hostedWorkspace: boolean;
   hostedFullAccessRefusal: string;
@@ -251,7 +252,7 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
       }
       if (body.outbound !== undefined) {
         const policy = normalizeOutboundPolicy(body.outbound);
-        if (!policy) return json(res, 400, { error: "outbound must be { policy: ask | allow, dailyCap: 1..1000 }" });
+        if (!policy) return json(res, 400, { error: "outbound must be { policy: ask | allow }" });
         patch.outbound = policy;
       }
       if (body.composio !== undefined) {
@@ -367,6 +368,19 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
         if (typeof body.autoStartVps !== "boolean") return json(res, 400, { error: "autoStartVps must be true or false" });
         patch.autoStartVps = body.autoStartVps;
       }
+      if (body.vpsDesktopMode !== undefined) {
+        if (body.vpsDesktopMode !== "shared" && body.vpsDesktopMode !== "per-bot") {
+          return json(res, 400, { error: "vpsDesktopMode must be shared or per-bot" });
+        }
+        if (existingBot && body.vpsDesktopMode !== (existingBot.vpsDesktopMode ?? "per-bot") &&
+            (existingBot.busy || activeVpsThreads.has(m[1]) || vps.vpsLifecycleBusy() || deps.sharedVpsControlHeld?.(existingBot))) {
+          return json(res, 409, { error: "Stop this bot's VPS turn and setup before changing desktop mode" });
+        }
+        patch.vpsDesktopMode = body.vpsDesktopMode;
+      }
+      if (body.cloudBackend === "vps" && body.vpsDesktopMode === undefined && patch.vpsDesktopMode === undefined && existingBot?.cloudBackend !== "vps" && existingBot?.vpsDesktopMode === undefined) {
+        patch.vpsDesktopMode = "shared";
+      }
       if (body.vpsAlias !== undefined) {
         if (body.vpsAlias === null || body.vpsAlias === "") {
           patch.vpsAlias = undefined;
@@ -388,8 +402,9 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
       // Moving a bot to another server is refused while its own computer still lives on the old one.
       // Resolved hosts, not raw text: pinning a bot to the server it already uses moves nothing.
       let vpsLeftOn: string | null = null;
+      const perBotAlias = (bot: { vpsAlias?: string }) => vpsSshAliasForBot(cfg, { vpsAlias: bot.vpsAlias });
       if (body.vpsAlias !== undefined && existingBot &&
-          vpsSshAliasForBot(cfg, { ...existingBot, vpsAlias: patch.vpsAlias as string | undefined }) !== vpsSshAliasForBot(cfg, existingBot)) {
+          perBotAlias({ vpsAlias: patch.vpsAlias as string | undefined }) !== perBotAlias(existingBot)) {
         // The scan awaits on SSH; a turn can start or another PATCH can land mid-scan, so every attempt
         // re-reads the bot first and the scan only counts when the re-read after it is unchanged.
         const VPS_ALIAS_MOVE_ATTEMPTS = 3;
@@ -397,7 +412,7 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
           const current = store.bot(m[1]);
           if (!current) return json(res, 404, { error: "no such bot" });
           // A concurrent PATCH may have already made this move; persisting the same host moves nothing.
-          if (vpsSshAliasForBot(cfg, { ...current, vpsAlias: patch.vpsAlias as string | undefined }) === vpsSshAliasForBot(cfg, current)) break;
+          if (perBotAlias({ vpsAlias: patch.vpsAlias as string | undefined }) === perBotAlias(current)) break;
           const aliasError = vpsBotAliasChangeError(Boolean(current.busy), activeVpsThreads.has(m[1]));
           if (aliasError) return json(res, 409, { error: aliasError });
           // A Start or Remove still running on the old host would land after the scan, like the default alias's guard.
@@ -406,7 +421,7 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
           const scannedVpsAlias = current.vpsAlias;
           const scannedBusy = current.busy;
           const scannedName = current.name;
-          const currentAlias = vpsSshAliasForBot(cfg, current);
+          const currentAlias = perBotAlias(current);
           // Scanned with this bot as the only owner: the guard only ever cares about its own container,
           // and naming the owner keeps a legacy unlabeled container visible to the check.
           const inventory = currentAlias ? await vps.listManagedVpsComputers(
@@ -585,8 +600,7 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
       // the bot they constrain. An originless, session-less loopback caller may loosen only while every bot is idle.
       const loosened: string[] = [];
       const trustPatch = patch as Pick<Partial<BotRecord>, "outbound" | "connectorScopes" | "fallback">;
-      if (body.outbound !== undefined && trustPatch.outbound?.policy === "allow" &&
-          (existingBot?.outbound?.policy !== "allow" || trustPatch.outbound.dailyCap > existingBot.outbound.dailyCap)) loosened.push("outbound");
+      if (body.outbound !== undefined && trustPatch.outbound?.policy === "allow" && existingBot?.outbound?.policy !== "allow") loosened.push("outbound");
       if (body.connectorScopes !== undefined && existingBot?.connectorScopes &&
           (!trustPatch.connectorScopes || Object.entries(trustPatch.connectorScopes.apps).some(([slug, scope]) =>
             !existingBot.connectorScopes!.apps[slug] || (scope === "write" && existingBot.connectorScopes!.apps[slug] === "read")))) loosened.push("connectorScopes");
@@ -649,6 +663,10 @@ export function createBotPatchRoutes(deps: BotPatchRouteDeps): RouteHandler {
         sectionKey(existingBot?.section) !== sectionKey(section);
       let bot: BotRecord | null;
       const freshBrowserBot = store.bot(m[1]);
+      if (freshBrowserBot && patch.vpsDesktopMode !== undefined && patch.vpsDesktopMode !== (freshBrowserBot.vpsDesktopMode ?? "per-bot") &&
+          (freshBrowserBot.busy || activeVpsThreads.has(m[1]) || vps.vpsLifecycleBusy() || deps.sharedVpsControlHeld?.(freshBrowserBot))) {
+        return json(res, 409, { error: "Stop this bot's VPS turn and release control before changing desktop mode" });
+      }
       // Rechecked: the awaits above can yield after the first memory check.
       if (freshBrowserBot && body.memoryEnabled !== undefined &&
           body.memoryEnabled !== (freshBrowserBot.memoryEnabled !== false) &&

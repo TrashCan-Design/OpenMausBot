@@ -25,7 +25,13 @@ const asAnthropicImage = (c: unknown): McpImageContent | null => {
     : null;
 };
 
-const asImageBlock = (c: unknown): McpImageContent | null => asMcpImage(c) ?? asAnthropicImage(c);
+const asImageBlock = (c: unknown): McpImageContent | null => {
+  const direct = asMcpImage(c) ?? asAnthropicImage(c);
+  if (direct) return direct;
+  if (!c || typeof c !== "object" || (c as { type?: unknown }).type !== "content") return null;
+  const wrapped = (c as { content?: unknown }).content;
+  return asMcpImage(wrapped) ?? asAnthropicImage(wrapped);
+};
 
 export function extractMcpImages(value: unknown): McpImageContent[] {
   const arr = Array.isArray(value)

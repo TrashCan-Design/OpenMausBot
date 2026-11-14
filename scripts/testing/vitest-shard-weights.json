@@ -461,7 +461,6 @@
     "server/delta-context.e2e.test.ts": 259,
     "server/desktop-computer.e2e.test.ts": 5,
     "server/desktop-updates.e2e.test.ts": 21,
-    "server/devs-reports.e2e.test.ts": 11,
     "server/digest-control.e2e.test.ts": 5,
     "server/digest.e2e.test.ts": 6,
     "server/direct-coordination.e2e.test.ts": 230,

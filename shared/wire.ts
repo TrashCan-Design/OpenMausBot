@@ -10,8 +10,9 @@ import type { BotAvatarCrop, MascotFaceColor } from "./bot-avatar.ts";
 import type { BotBodyId } from "./bot-body.ts";
 import type { ReplyStyle } from "./reply-style.ts";
 import type { CredentialTargetId, CUSTOM_SECRET_TARGET, SecretDelivery } from "./credential-request.ts";
+import type { EmailOutgoingFields } from "./email.ts";
 import type { TeamSetupRequest } from "./team-setup.ts"; import type { DefaultBotFields, HelperIntroField } from "./default-bot.ts";
-import type { SetupCardFields } from "./setup-card.ts"; import type { BugReportField } from "./devs-report-status.ts"; import type { BotAccessFields } from "./bot-access.ts";
+import type { SetupCardFields } from "./setup-card.ts"; import type { BotAccessFields } from "./bot-access.ts";
 import type { RoutineRequestCardData } from "./routine-request.ts"; import type { SavedStepsMark } from "./saved-steps.ts";
 import type { WebhookRequestCardData } from "./webhook-request.ts"; import type { WaitCardField, WaitLineField } from "./wait-request.ts"; import type { ComputerAskField } from "./computer-ask.ts";
 import type { AppEventAttempt, AppTrigger, AppTriggerRequestCardData, AppTriggerService } from "./app-triggers.ts";
@@ -312,8 +313,8 @@ export interface WireBot extends DefaultBotFields, BotAccessFields {
   computer?: Surface | "off";
   /** Which cloud computer backs computer: "cloud"; absent means Boat. */
   cloudBackend?: CloudBackend;
-  /** Auto mode may prepare/start this bot's managed VPS container. */
-  autoStartVps?: boolean;
+  /** Auto mode may prepare this bot's VPS. Shared mode uses one installation desktop on the default SSH host. */
+  autoStartVps?: boolean; vpsDesktopMode?: "per-bot" | "shared";
   /** This bot's own SSH config alias for its managed VPS computer; absent
    * means the default server from Settings → API keys. */
   vpsAlias?: string;
@@ -373,7 +374,7 @@ export interface WireBot extends DefaultBotFields, BotAccessFields {
    * none. Grants never travel in shareable exports. */
   connectorTools?: Record<string, ConnectorToolGrant>;
   connectorScopes?: { apps: Record<string, "read" | "write"> };
-  outbound?: { policy: "ask" | "allow"; dailyCap: number };
+  outbound?: { policy: "ask" | "allow" };
   /** Which of a paired phone's apps this bot may use; absent: every bot may use what the phone allows (shared/phone-apps.ts). */
   phoneApps?: import("./phone-apps.ts").PhoneApps;
   /** Ordered backups used only by opt-in, pre-prompt startup recovery. */
@@ -443,7 +444,7 @@ export type CardAnswerer = (
 export const EXCERPT_SUMMARY_HEADER = "Historical excerpts in chronological order; newer corrections override older requests. These excerpts may omit earlier details.";
 
 /** One transcript line, serialized as stored. */
-export interface WireMessage extends HelperIntroField, SetupCardFields, WaitLineField, BugReportField {
+export interface WireMessage extends HelperIntroField, SetupCardFields, WaitLineField {
   roomRequest?: { id: string; phase: "request" | "result" };
   id: string;
   role: "bot" | "user";
@@ -742,10 +743,22 @@ export interface SecretRequestCardData {
   target: CredentialTargetId | typeof CUSTOM_SECRET_TARGET;
   label: string;
   description: string;
+  /** Optional named-key copy for client localization; `description` remains the complete fallback for English and older cards. */
+  descriptionParts?: {
+    baseCode: "secretCard.greenference.description";
+    reason: string;
+    bot: string;
+  };
   placeholder: string;
   helpUrl: string;
-  /** A custom secret's use the person agrees to: "ref", OpenBot's own tools only; "file", the bot's commands. */
-  delivery?: SecretDelivery;
+  /** A custom secret's use the person agrees to: "ref", OpenBot's own tools only; "file", the bot's commands; "email", the Email connector, never a bot. */
+  delivery?: SecretDelivery | "email";
+  /** An email card: the mailbox it is for, when known; off a phone the person can change it on the card. */
+  address?: string;
+  /** An email card: the incoming server that took the password, once it did, while sending is still being checked. */
+  emailReading?: string;
+  /** An email card for a connected mailbox that can't send: only its outgoing server, from what is known, never a password. */
+  emailOutgoing?: EmailOutgoingFields;
   /** A custom secret: the bot's own words on why; `description` adds what the bot may do with it, and helpUrl is empty. */
   reason?: string;
   /** A file secret's Local VM target key, when the asking turn ran in one. */

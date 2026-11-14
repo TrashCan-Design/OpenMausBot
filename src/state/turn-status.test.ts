@@ -64,6 +64,19 @@ describe("a thread's live turn", () => {
     expect(turnLive("t").status, "a token count says nothing about the call").toMatchObject({ target: "scrape.py" });
   });
 
+  it("keeps a provider reasoning summary on this turn and drops it when the next turn starts", () => {
+    note({ type: "content.delta", streamKind: "reasoning_text", delta: "Look at " } as Partial<RuntimeEvent>);
+    note({ type: "content.delta", streamKind: "reasoning_text", delta: "the page" } as Partial<RuntimeEvent>);
+    expect(turnLive("t").reasoning).toBe("Look at the page");
+    note({ type: "content.delta", streamKind: "assistant_text", delta: "Done" } as Partial<RuntimeEvent>);
+    expect(turnLive("t")).toMatchObject({ status: { activity: "reply" }, reasoning: "Look at the page" });
+    note({ type: "turn.completed", ok: true } as Partial<RuntimeEvent>);
+    expect(turnLive("t").reasoning).toBe("Look at the page");
+    note({ type: "turn.started", turnId: "turn-2" } as Partial<RuntimeEvent>);
+    expect(turnLive("t").reasoning).toBeUndefined();
+    expect(turnLive("other").reasoning).toBeUndefined();
+  });
+
   it("keeps threads apart and returns the same snapshot until something shown changes", () => {
     note({ type: "content.delta", streamKind: "assistant_text", delta: "a" } as Partial<RuntimeEvent>, "x");
     const first = turnLive("x");

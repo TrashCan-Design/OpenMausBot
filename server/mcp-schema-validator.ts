@@ -27,7 +27,10 @@ export function compileToolSchema(schema: Record<string, unknown>, options: { al
   compiler.addFormat("uint32", { type: "number", validate: value => Number.isInteger(value) && value >= 0 && value <= 4294967295 });
   compiler.addFormat("uint64", { type: "number", validate: value => Number.isSafeInteger(value) && value >= 0 });
   try { return compiler.compile(schema); }
-  catch { throw new Error("MCP tool schema could not be validated; check its constraints, formats, and references"); }
+  catch {
+    if (dialect === undefined) return compileToolSchema({ ...schema, $schema: "https://json-schema.org/draft/2020-12/schema" }, options);
+    throw new Error("MCP tool schema could not be validated; check its constraints, formats, and references");
+  }
 }
 
 export function schemaProblems(errors: readonly ErrorObject[] | null | undefined, max = 8): string[] {

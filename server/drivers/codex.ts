@@ -51,7 +51,7 @@ import { archivedNativeCodexThread, CODEX_MISSING_CREDENTIALS, CODEX_SIGN_IN_EXP
 import { codexLoginCheck, codexLoginStatus, storedCodexLogin } from "./codex-login.ts";
 import { keyRejected, noteKeyAccepted, noteKeyRejected } from "../key-rejections.ts";
 import { classifyResumeFailure, mayReplay, rebuiltSessionNotice, recoveryPromptFor } from "../resume-recovery.ts";
-import { extractMcpImages } from "../mcp-tool-images.ts"; import { codexImageInputs, withoutInlineImages } from "./codex-images.ts";
+import { extractMcpImages } from "../mcp-tool-images.ts"; import { screenshotWasRequested } from "../screenshot-request.ts"; import { codexImageInputs, withoutInlineImages } from "./codex-images.ts";
 import { parseProtocolAskQuestions, questionChoices } from "../../shared/ask-question.ts";
 import { codexQuestionReply, openAsyncQuestion, type CodexAsk } from "./codex-questions.ts";
 import { codexReleaseUpdate, codexUpdateCommand } from "./codex-update.ts";
@@ -925,7 +925,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           return settle(false, failedStop);
         }
         await interruptibleDelay(Math.max(1, Math.round(delayMs * retryScale)), stopSignal.signal).promise;
-        if (!stopRequested) void launchAttempt(attempt).catch(() => {});
+        if (!stopRequested) void launchAttempt(attempt).catch((error: unknown) => { const running = active.get(threadId); if (running?.turnId === turnId) active.delete(threadId); else if (announced || running) return; const message = (error instanceof Error ? error.message : String(error)).slice(0, 500); emit({ ...base(threadId, turnId), type: "runtime.error", message }); emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "launch_error", cost: null }); });
         else await settle(false, "interrupted");
       };
 
@@ -1258,11 +1258,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
                 ok: item.status !== "failed" && item.status !== "declined",
                 output: toolDetailPreview(item.type === "commandExecution" ? { output: item.aggregatedOutput, exitCode: item.exitCode } : item.type === "mcpToolCall" ? item.error ?? item.result : item.type === "fileChange" ? item.changes : item.action),
               });
-              if (item.type === "mcpToolCall") {
-                for (const img of extractMcpImages(item.result)) {
-                  emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_image", data: img.data });
-                }
-              }
+              if (item.type === "mcpToolCall" && screenshotWasRequested([{ role: "user", text: turn.text }])) for (const img of extractMcpImages(item.result)) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_image", data: img.data });
             } else if (item.type === "reasoning") {
               emit({ ...base(threadId, turnId), type: "item.updated", itemType: "reasoning", tokens: null });
             }
@@ -1640,7 +1636,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       }
     };
 
-    void launchAttempt(0).catch(() => {});
+    void launchAttempt(0).catch((error: unknown) => { const running = active.get(threadId); if (running?.turnId === turnId) active.delete(threadId); else if (announced || running) return; const message = (error instanceof Error ? error.message : String(error)).slice(0, 500); emit({ ...base(threadId, turnId), type: "runtime.error", message }); emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "launch_error", cost: null }); });
     return { turnId };
   };
 

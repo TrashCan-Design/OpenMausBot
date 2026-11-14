@@ -31,8 +31,11 @@ export interface McpServerRouteDeps {
   appCatalog?: Pick<ChatAppsMcp, "probeOptions" | "serverChanged" | "forgetServer"> & Partial<Pick<ChatAppsMcp, "hasApps">>;
   /** A Team Cloud: each member's own key and sign-in for a removed server go with it. */
   forgetPeople?(name: string): void;
-  /** Whether each command server starts for each bot: checked again when one is added, changed or turned on. */
+  /** Whether each command server starts for each bot: checked again when one is added, changed, turned on or restarted. */
   health?: { changed(name: string): void };
+  /** Reloads a command server's process on the next turn without rewriting what is saved. */
+  restart?(name: string): { ok: true } | { ok: false; status: number; error: string };
+  forgetRestart?(name: string): void;
   /** A server was added or removed on purpose: a Cloud home's routines wait while every connection is gone. */
   connectionsChanged?(change: "added" | "removed"): void;
   /** How bots' turns reach a URL server here: through the credential broker where turns are boxed (null: directly). */
@@ -277,6 +280,7 @@ export function createMcpServerRoutes(deps: McpServerRouteDeps): RouteHandler {
           mcpOAuth.forget(name);
           forgetPeople?.(name);
           appCatalog?.forgetServer(name);
+          deps.forgetRestart?.(name);
           deps.connectionsChanged?.("removed");
           return json(res, 200, withServerDetails(mcpServerResponse()));
         }
@@ -286,8 +290,14 @@ export function createMcpServerRoutes(deps: McpServerRouteDeps): RouteHandler {
         const body = await readBody(req);
         if (method === "PATCH") {
           const key = body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length === 1 ? Object.keys(body)[0] : undefined;
+          if (key === "restart") {
+            if (body.restart !== true) return json(res, 400, { error: "restart takes true." });
+            const restarted = deps.restart?.(name) ?? { ok: false as const, status: 400, error: "Restart is not available." };
+            if (!restarted.ok) return json(res, restarted.status, { error: restarted.error });
+            return json(res, 200, withServerDetails(mcpServerResponse()));
+          }
           if ((key !== "enabled" && key !== "apps") || typeof body[key] !== "boolean") {
-            return json(res, 400, { error: "Only an enabled or apps boolean can be changed here." });
+            return json(res, 400, { error: "Only an enabled or apps boolean, or restart: true, can be changed here." });
           }
           const { apps: _apps, ...rest } = existing.server;
           persistMcpServers({ ...current, [name]: key === "enabled" ? { ...existing.server, enabled: body.enabled } : { ...rest, ...(body.apps ? {} : { apps: false }) } });

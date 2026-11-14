@@ -2,6 +2,7 @@
 // makes tool schemas provider-safe and keeps error results text-only.
 import { cuaExecArgs } from "./container-computer.ts";
 import { runMcpBridge } from "./mcp-bridge.ts";
+import { annotateSandboxInputResult, foregroundSandboxInput } from "./sandbox-desktop-input.ts";
 
 const [runtime, container, socket] = process.argv.slice(2);
 if (!runtime || !["docker", "podman", "container"].includes(runtime)) {
@@ -23,4 +24,6 @@ runMcpBridge({
   label: "Cua Driver",
   // No liveness watchdog: the runtime CLI talks to a local daemon and fails fast on its own.
   ...(controlUrl && controlToken ? { gate: { url: controlUrl, token: controlToken } } : {}),
+  prepareLine: foregroundSandboxInput,
+  rewriteResponse: annotateSandboxInputResult,
 });

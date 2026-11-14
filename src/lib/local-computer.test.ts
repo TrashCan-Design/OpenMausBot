@@ -270,6 +270,14 @@ describe("local computer UI eligibility", () => {
       persistedBot: { computer: undefined, cloudBackend: "box" },
     })).toBe(false);
   });
+
+  it("requires the requested VPS mode to match the saved mode", () => {
+    const expected = { computer: "cloud" as const, cloudBackend: "vps" as const, vpsDesktopMode: "shared" as const };
+    expect(persistedComputerSelectionMatches({ ...expected, persistedBot: expected })).toBe(true);
+    expect(persistedComputerSelectionMatches({ ...expected, persistedBot: { ...expected, vpsDesktopMode: undefined } })).toBe(false);
+    expect(persistedComputerSelectionMatches({ ...expected, vpsDesktopMode: "per-bot", persistedBot: expected })).toBe(false);
+    expect(persistedComputerSelectionMatches({ computer: "cloud", cloudBackend: "vps", persistedBot: { computer: "cloud", cloudBackend: "vps" } })).toBe(true);
+  });
 });
 
 describe("what the person reads about using this computer", () => {

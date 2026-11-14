@@ -178,6 +178,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
         }
       : seeded;
     const openRouter = Boolean(apiKey) && !config.managedModels && isOpenRouterOrigin(config.url);
+    const textOnlyModels = new Set<string>();
     const freeTier = () => openRouter ? openRouterFreeTier(apiKey, config.url) : Promise.resolve(null);
 
     const fetchModels = async () => {
@@ -236,6 +237,9 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
           if (!id || seen.has(id)) continue;
           seen.add(id);
           const label = typeof row.name === "string" && row.name.trim() ? row.name : id;
+          const architecture = row.architecture;
+          const modalities = architecture && typeof architecture === "object" ? (architecture as { input_modalities?: unknown }).input_modalities : undefined;
+          if (openRouter && Array.isArray(modalities) && !modalities.includes("image")) textOnlyModels.add(id);
           const contextWindow = advertisedContextWindow(row);
           options.push({
             id,
@@ -283,6 +287,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       tools: config.tools,
       computerUse: true,
       nudgeAnnouncedAction: true,
+      retryScale: Number(process.env.FAKE_OPENAI_COMPAT_RETRY_SCALE ?? "1"),
+      imageInput: (model) => !textOnlyModels.has(model),
       models: () => catalog,
       refreshModels: fetchModels,
       requestBody: (model, messages, stream) => ({
